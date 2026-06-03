@@ -1,4 +1,4 @@
-FROM nginx:1.30.1
+FROM nginx:1.30.2
 
 # Proxy cache env vars
 ENV PROXY_CACHE_MAX_SIZE=10g
@@ -26,7 +26,7 @@ ENV PREFIX_LEADING_DIRECTORY_PATH=""
 # Note: the PKG_RELEASE environment variable is inherited
 
 RUN set -x \
-    && echo "deb [signed-by=/etc/apt/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/debian/ $(echo $PKG_RELEASE | cut -f2 -d~) nginx" >> /etc/apt/sources.list.d/nginx.list \
+    && echo "deb [signed-by=/etc/apt/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/debian/ $(echo $PKG_RELEASE | cut -f2 -d~) nginx" >> /etc/apt/sources.list.d/nginx.list \
     && apt-get update \
     && apt-get install --no-install-recommends --no-install-suggests -y \
       libedit2 nginx-module-njs nginx-module-xslt \
