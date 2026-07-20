@@ -1,4 +1,4 @@
-FROM nginx:1.30.2
+FROM nginx:1.30.4
 
 # Proxy cache env vars
 ENV PROXY_CACHE_MAX_SIZE=10g

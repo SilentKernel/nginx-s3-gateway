@@ -1,13 +1,13 @@
-k#!/bin/bash
+#!/bin/bash
 # build-unprivileged.sh
 # Build and push nginx-s3-gateway unprivileged to Docker Hub
 # Usage: ./build-unprivileged.sh [NGINX_VERSION]
-# Example: ./build-unprivileged.sh 1.30.1
+# Example: ./build-unprivileged.sh 1.30.4
 
 set -e
 
 # Config
-NGINX_VERSION="${1:-1.30.1}"
+NGINX_VERSION="${1:-1.30.4}"
 DOCKER_REPO="silentk/nginx-s3-gateway"
 PLATFORM="linux/amd64"
 LOCAL_BASE_TAG="nginx-s3-gateway"
@@ -18,6 +18,8 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
+
+docker pull "nginx:${NGINX_VERSION}"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║  Build nginx-s3-gateway unprivileged                       ║${NC}"
