@@ -7,7 +7,7 @@
 set -e
 
 # Config
-NGINX_VERSION="${1:-1.30.4}"
+NGINX_VERSION="${1:-1.30.6}"
 DOCKER_REPO="silentk/nginx-s3-gateway"
 PLATFORM="linux/amd64"
 LOCAL_BASE_TAG="nginx-s3-gateway"
