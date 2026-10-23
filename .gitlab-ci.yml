@@ -1,0 +1,98 @@
+# Nightly build of the unprivileged nginx-s3-gateway image. Runs on the amd64 VM runner shared with
+# frankenphp-docker & co (shell executor, see docs/runner.md). On the default branch (push, nightly
+# schedule, manual "Run pipeline") the image is built on the latest nginx 1.30.x with Debian's
+# updates, tested and pushed to our registry and Docker Hub; elsewhere (merge requests, other
+# branches) it is built and tested only. Every gate (smoke, upstream's API suite against MinIO,
+# negative tests, CVE report) runs inside build.sh before anything is pushed.
+#
+# CI/CD variables (Settings > CI/CD > Variables): NTFY_TOPIC (notifications; unset = none),
+# NTFY_TOKEN (masked, optional), DOCKERHUB_USER and DOCKERHUB_TOKEN (protected, the token masked:
+# a Docker Hub access token with Read & Write on DOCKERHUB_IMAGE; required to publish).
+#
+# The GitHub workflows in .github/ are upstream's (nginx/nginx-s3-gateway); GitLab ignores them.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+stages: [test, build, notify]
+
+default:
+  tags: [nginx-s3-amd64]
+
+variables:
+  NTFY_URL: https://notif.developpeur-freelance.io
+  # Scanner of tests/scan.sh (refuses only a new fixable CRITICAL), pinned by digest: a tag can be
+  # re-pointed by whoever controls the publisher's account (Trivy's images were, in March 2026).
+  # To update: check the release, then `docker buildx imagetools inspect aquasec/trivy:<version>`.
+  TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+
+# Publishing pipelines: default branch, pushed to, scheduled or started by hand.
+.publish: &publish
+  if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE =~ /^(push|schedule|web)$/
+
+# The shell executor shares the gitlab-runner user's home: each job logs in to the registries with
+# its own Docker config, outside the checkout (build.sh refuses to push from a dirty tree).
+.registry:
+  variables:
+    DOCKER_CONFIG: $CI_BUILDS_DIR/docker-config-$CI_JOB_ID
+  before_script:
+    - mkdir -p "$DOCKER_CONFIG"
+    - echo "$CI_JOB_TOKEN" | docker login "$CI_REGISTRY" -u gitlab-ci-token --password-stdin
+    - set -a; . ./versions.env; set +a
+    - '[ "$IMAGE" = "$CI_REGISTRY_IMAGE" ] || { echo "IMAGE in versions.env ($IMAGE) is not this project''s registry ($CI_REGISTRY_IMAGE)" >&2; exit 1; }'
+    # Docker Hub: only to publish (its variables are protected: main only).
+    - |
+      if [ "$BUILD_ARGS" = "--push" ] && [ -n "$DOCKERHUB_IMAGE" ]; then
+        [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ] || { echo "DOCKERHUB_USER / DOCKERHUB_TOKEN are not set: cannot publish to ${DOCKERHUB_IMAGE}" >&2; exit 1; }
+        echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+      fi
+  after_script:
+    - rm -rf "$DOCKER_CONFIG"
+
+unit:
+  stage: test
+  script:
+    - tests/unit.sh
+
+guard:
+  stage: test
+  script:
+    - tests/guard.sh
+
+build:
+  stage: build
+  extends: .registry
+  resource_group: nginx-s3-gateway
+  timeout: 1h
+  rules:
+    - <<: *publish
+      variables:
+        BUILD_ARGS: --push
+    - when: on_success
+      variables:
+        BUILD_ARGS: ""
+  script:
+    - ./build.sh $BUILD_ARGS
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - trivy-report.json
+      - trivy-report.txt
+      - trivy-published.json
+      - test-logs/
+
+notify:failure:
+  stage: notify
+  rules:
+    - <<: *publish
+      when: on_failure
+  script:
+    - >
+      scripts/notify.sh urgent rotating_light
+      "nginx-s3-gateway: ${CI_PIPELINE_SOURCE} pipeline FAILED"
+      "Pipeline #${CI_PIPELINE_IID} on ${CI_COMMIT_SHORT_SHA} failed. The moving tag keeps its previous image unless the push step itself broke. Open the pipeline to see which gate refused."

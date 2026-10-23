@@ -1,4 +1,10 @@
-FROM nginx:1.30.4
+# Base version: build.sh passes the latest 1.30.x (scripts/resolve-versions.sh); the default is for
+# a plain `docker build` (upstream GitHub workflow, test.sh).
+ARG NGINX_VERSION=1.30.6
+FROM nginx:${NGINX_VERSION}
+
+# Security floor (versions.env, passed by build.sh). Empty: no check.
+ARG MIN_NGINX_VERSION=""
 
 # Proxy cache env vars
 ENV PROXY_CACHE_MAX_SIZE=10g
@@ -25,12 +31,31 @@ ENV PREFIX_LEADING_DIRECTORY_PATH=""
 
 # Note: the PKG_RELEASE environment variable is inherited
 
+# NGINX_VERSION, NJS_VERSION, NJS_RELEASE and DYNPKG_RELEASE are inherited too: the modules are pinned
+# to the exact nginx of the base image (unpinned, apt takes the newest module, built for another
+# nginx). Debian's updates are applied before nginx.org's repository is added, so the upgrade never
+# touches nginx itself.
 RUN set -x \
+    && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && echo "deb [signed-by=/etc/apt/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/debian/ $(echo $PKG_RELEASE | cut -f2 -d~) nginx" >> /etc/apt/sources.list.d/nginx.list \
     && apt-get update \
     && apt-get install --no-install-recommends --no-install-suggests -y \
-      libedit2 nginx-module-njs nginx-module-xslt \
+      libedit2 \
+      "nginx-module-njs=${NGINX_VERSION}+${NJS_VERSION}-${NJS_RELEASE}" \
+      "nginx-module-xslt=${NGINX_VERSION}-${DYNPKG_RELEASE}" \
     && apt-get remove --purge --auto-remove -y && rm -rf /var/lib/apt/lists/*
+
+# Refuse to produce an image older than the security floor.
+RUN set -eu; \
+    actual="$(nginx -v 2>&1 | sed -n 's|^nginx version: nginx/\([0-9.]*\).*|\1|p')"; \
+    echo "nginx ${actual}, floor ${MIN_NGINX_VERSION:-none}"; \
+    test -n "${actual}"; \
+    if [ -n "${MIN_NGINX_VERSION}" ] \
+        && [ "$(printf '%s\n%s\n' "${MIN_NGINX_VERSION}" "${actual}" | sort -V | head -1)" != "${MIN_NGINX_VERSION}" ]; then \
+        echo "nginx ${actual} is older than ${MIN_NGINX_VERSION}: refusing to build a vulnerable image" >&2; \
+        exit 1; \
+    fi
 
 COPY oss/etc/nginx /etc/nginx
 COPY common/etc /etc

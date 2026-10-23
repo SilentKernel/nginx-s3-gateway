@@ -388,3 +388,8 @@ override.tf.json
 terraform.rc
 .tfplan
 # End of https://www.toptal.com/developers/gitignore/api/terraform
+
+# Nightly build (build.sh): CI artifacts
+trivy-report.*
+trivy-published.json
+test-logs/

@@ -8,6 +8,32 @@
 
 # NGINX S3 Gateway
 
+## Our nightly build (fork)
+
+This fork publishes the **unprivileged** image (port 8080, user `nginx`), rebuilt every night by
+GitLab CI on the latest **nginx 1.30.x** with Debian's updates, after every gate passed:
+
+| Tag (in `registry.developpeur-freelance.io/silent/nginx-s3-gateway-docker` and `silentk/nginx-s3-gateway`) | Use |
+|---|---|
+| `1.30-unprivileged` | moving: what production uses |
+| `latest` | same image as `1.30-unprivileged` |
+| `1.30.6-unprivileged` | latest build of that nginx version |
+| `1.30.6-unprivileged-YYYYMMDD` | never overwritten, for rollbacks |
+
+```bash
+./build.sh                       # resolve the latest 1.30.x, build, every test gate; nothing pushed
+./build.sh --push                # the same, then push both registries (clean tree; refuses to downgrade)
+NGINX_VERSION=1.30.5 ./build.sh  # a given version (rollback, reproduction)
+tests/unit.sh                    # offline tests of scripts/
+```
+
+Settings live in `versions.env` (series `NGINX_SERIES=1.30`, security floor `MIN_NGINX_VERSION`,
+registries). Gates, in order: version lookup (`scripts/resolve-versions.sh`), floor guard and module
+pinning (`Dockerfile.oss`), no downgrade of the moving tag, `tests/smoke.sh`, `tests/integration.sh`
+(upstream's API suite against MinIO, every configuration of `test.sh`), `tests/negative.sh`,
+`tests/scan.sh` (Trivy: no new fixable CRITICAL), then a push verified tag by tag.
+CI and runner setup: [`docs/runner.md`](docs/runner.md).
+
 ## Introduction
 
 This project provides a working configuration of NGINX configured to act as
