@@ -8,8 +8,9 @@ store, housekeeping cron). This project only needs the steps below.
 
 - GitLab project `silent/nginx-s3-gateway-docker` (private), **CI/CD enabled** (Settings > General >
   Visibility, project features, permissions > CI/CD; our GitLab disables it on new projects).
-- Remote: `git remote add gitlab git@git.developpeur-freelance.io:silent/nginx-s3-gateway-docker.git`
-  (`origin` stays the GitHub fork of nginx/nginx-s3-gateway).
+- Remotes: `origin` is this GitLab project (`git@git.developpeur-freelance.io:silent/nginx-s3-gateway-docker.git`,
+  pushing `main` publishes the image); `github` is the backup, the GitHub fork of nginx/nginx-s3-gateway
+  (`git@github.com:SilentKernel/nginx-s3-gateway.git`).
 - **Settings > Repository > Protected branches**: `main` protected (only maintainers push), since a
   push to `main` publishes the image.
 
@@ -48,6 +49,6 @@ tags is.
 
 ## 6. First run
 
-Push `main` to `gitlab`, then Build > Pipelines > **Run pipeline** on `main`. Nothing is published
+Push `main` to `origin`, then Build > Pipelines > **Run pipeline** on `main`. Nothing is published
 yet, so the first build has no regression baseline (Trivy reports only); the next nights compare
 with the published image.
