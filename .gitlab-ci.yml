@@ -1,13 +1,12 @@
 # Nightly build of the unprivileged nginx-s3-gateway image. Runs on the amd64 VM runner shared with
 # frankenphp-docker & co (shell executor, see docs/runner.md). On the default branch (push, nightly
 # schedule, manual "Run pipeline") the image is built on the latest nginx 1.30.x with Debian's
-# updates, tested and pushed to our registry and Docker Hub; elsewhere (merge requests, other
-# branches) it is built and tested only. Every gate (smoke, upstream's API suite against MinIO,
+# updates, tested and pushed to our registry (only: no Docker Hub copy); elsewhere (merge requests,
+# other branches) it is built and tested only. Every gate (smoke, upstream's API suite against MinIO,
 # negative tests, CVE report) runs inside build.sh before anything is pushed.
 #
 # CI/CD variables (Settings > CI/CD > Variables): NTFY_TOPIC (notifications; unset = none),
-# NTFY_TOKEN (masked, optional), DOCKERHUB_USER and DOCKERHUB_TOKEN (protected, the token masked:
-# a Docker Hub access token with Read & Write on DOCKERHUB_IMAGE; required to publish).
+# NTFY_TOKEN (masked, optional).
 #
 # The GitHub workflows in .github/ are upstream's (nginx/nginx-s3-gateway); GitLab ignores them.
 
@@ -34,7 +33,7 @@ variables:
 .publish: &publish
   if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE =~ /^(push|schedule|web)$/
 
-# The shell executor shares the gitlab-runner user's home: each job logs in to the registries with
+# The shell executor shares the gitlab-runner user's home: each job logs in to the registry with
 # its own Docker config, outside the checkout (build.sh refuses to push from a dirty tree).
 .registry:
   variables:
@@ -44,12 +43,6 @@ variables:
     - echo "$CI_JOB_TOKEN" | docker login "$CI_REGISTRY" -u gitlab-ci-token --password-stdin
     - set -a; . ./versions.env; set +a
     - '[ "$IMAGE" = "$CI_REGISTRY_IMAGE" ] || { echo "IMAGE in versions.env ($IMAGE) is not this project''s registry ($CI_REGISTRY_IMAGE)" >&2; exit 1; }'
-    # Docker Hub: only to publish (its variables are protected: main only).
-    - |
-      if [ "$BUILD_ARGS" = "--push" ] && [ -n "$DOCKERHUB_IMAGE" ]; then
-        [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ] || { echo "DOCKERHUB_USER / DOCKERHUB_TOKEN are not set: cannot publish to ${DOCKERHUB_IMAGE}" >&2; exit 1; }
-        echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
-      fi
   after_script:
     - rm -rf "$DOCKER_CONFIG"
 

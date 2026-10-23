@@ -21,8 +21,8 @@ Settings > CI/CD > Runners > Project runners. `concurrent = 1` on the VM queues 
 nightlies; the `build` job also takes the `nginx-s3-gateway` resource group.
 
 Outbound HTTPS needed on top of the other projects: `nginx.org` (njs/xslt packages),
-`hub.docker.com` (tag lookup), Docker Hub registry (`nginx`, `pgsty/minio`, `aquasec/trivy`, push to
-`silentk/nginx-s3-gateway`).
+`hub.docker.com` (tag lookup), Docker Hub registry (pulls only: `nginx`, `pgsty/minio`,
+`aquasec/trivy`).
 
 ## 3. CI/CD variables (Settings > CI/CD > Variables)
 
@@ -30,11 +30,8 @@ Outbound HTTPS needed on top of the other projects: `nginx.org` (njs/xslt packag
 |---|---|---|
 | `NTFY_TOPIC` | protected | `gitlab-ci-alert-x564789` (unset = no notifications) |
 | `NTFY_TOKEN` | protected, masked | ntfy access token, if the server requires one |
-| `DOCKERHUB_USER` | protected | `silentk` |
-| `DOCKERHUB_TOKEN` | protected, masked | Docker Hub personal access token "gitlab-ci nginx-s3-gateway-docker (git.developpeur-freelance.io)", **Repo Read & Write** (personal tokens cannot be limited to one repository), no expiry |
 
-Without the Docker Hub pair, publishing pipelines fail before building (`DOCKERHUB_IMAGE` empty in
-`versions.env` = no Docker Hub push).
+No Docker Hub variables: the image is published to our registry only.
 
 ## 4. Schedule
 
@@ -47,7 +44,7 @@ Without the Docker Hub pair, publishing pipelines fail before building (`DOCKERH
 `~/Dropbox/Scripts/clean-registry.sh`. Its `KEEP_REGEX` must protect the moving tag
 (`1\.30-unprivileged`, plus `latest` already there), and `PRUNE_VERSION_REGEX` should list
 `silent/nginx-s3-gateway-docker` so a `1.30.x-unprivileged` tag is kept only while one of its dated
-tags is. Docker Hub has no cleanup: dated tags accumulate there (one per night, small layers shared).
+tags is.
 
 ## 6. First run
 

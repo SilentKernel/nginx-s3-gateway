@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Builds the unprivileged nginx-s3-gateway image (IMAGE and DOCKERHUB_IMAGE in versions.env) for
-# production (amd64), tests it, and pushes it only with --push.
+# Builds the unprivileged nginx-s3-gateway image (IMAGE in versions.env) for production (amd64),
+# tests it, and pushes it to our registry only with --push (no Docker Hub copy).
 #
 #   ./build.sh                      build + every gate, nothing pushed
-#   ./build.sh --push               the same, then push the tags to our registry, then Docker Hub
+#   ./build.sh --push               the same, then push the tags to our registry
 #   NGINX_VERSION=1.30.5 ./build.sh a given version (rollback, reproduction)
 #
 # The version is the latest nginx ${NGINX_SERIES}.x on Docker Hub (scripts/resolve-versions.sh).
 # Dockerfile.oss refuses an nginx below MIN_NGINX_VERSION and pins the njs/xslt modules to that exact
 # nginx; --push refuses to publish a version older than the moving tag serves.
 #
-# Tags, in both registries: <ver>-unprivileged-YYYYMMDD (never overwritten, for rollbacks),
+# Tags: <ver>-unprivileged-YYYYMMDD (never overwritten, for rollbacks),
 # <ver>-unprivileged (latest build of that version), ${NGINX_SERIES}-unprivileged (moving, what
 # production uses) and latest.
 #
@@ -19,7 +19,7 @@
 # (upstream's HTTP API suite against MinIO, every configuration of test.sh), tests/negative.sh (the
 # gates still catch broken images) and tests/scan.sh (no new fixable CRITICAL CVE). tests/guard.sh
 # runs as its own CI job. The candidate lives under a private local name until the push: another
-# build on the same Docker engine pulling the public tags cannot swap it, and after the push each
+# build on the same Docker engine pulling the public tags cannot swap it, and after the push the
 # registry must serve exactly the tested image. (Same structure as frankenphp-docker's build.sh.)
 set -euo pipefail
 
@@ -53,7 +53,7 @@ export NGINX_VERSION
 TODAY="$(date -u +%Y%m%d)"
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 TAG_MOVING="${IMAGE}:${NGINX_SERIES}-unprivileged"
-# Every tag, per registry; the moving tag and latest last.
+# Every tag of repository $1; the moving tag and latest last.
 tags_of() { printf '%s\n' "$1:${NGINX_VERSION}-unprivileged-${TODAY}" "$1:${NGINX_VERSION}-unprivileged" "$1:${NGINX_SERIES}-unprivileged" "$1:latest"; }
 CANDIDATE="nginx-s3-gateway-candidate:$(date -u +%Y%m%d%H%M%S)-$$"
 trap 'docker image rm "$CANDIDATE" >/dev/null 2>&1 || true' EXIT
@@ -150,14 +150,12 @@ push_tested() {
 }
 
 if [ "$PUSH" = 1 ]; then
-    for repo in "$IMAGE" ${DOCKERHUB_IMAGE:+"$DOCKERHUB_IMAGE"}; do
-        echo "==> pushing to ${repo} (moving tag and latest last)"
-        while read -r tag; do push_tested "$tag"; done < <(tags_of "$repo")
-    done
+    echo "==> pushing to ${IMAGE} (moving tag and latest last)"
+    while read -r tag; do push_tested "$tag"; done < <(tags_of "$IMAGE")
     if [ "$PUBLISHED_NGINX" != "$NGINX_VERSION" ]; then
         "$ROOT/scripts/notify.sh" default "package,arrow_up" \
             "New nginx-s3-gateway: nginx ${NGINX_VERSION}" \
-            "${TAG_MOVING} moved from nginx ${PUBLISHED_NGINX:-none}${DOCKERHUB_IMAGE:+ (and ${DOCKERHUB_IMAGE})}. Pull it and restart the gateways."
+            "${TAG_MOVING} moved from nginx ${PUBLISHED_NGINX:-none}. Pull it and restart the gateways."
     fi
 else
     docker tag "$CANDIDATE_ID" "${IMAGE}:${NGINX_VERSION}-unprivileged"
