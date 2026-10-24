@@ -151,4 +151,20 @@ expect_fail "Docker Hub unreachable" "cannot reach Docker Hub" \
 expect_ok "ntfy unreachable: exit 0, error only logged" "" \
     env NTFY_URL="http://127.0.0.1:$port" NTFY_TOPIC=t "$ROOT/scripts/notify.sh" high x t m
 
+# tests/os-updates.sh on captured `apt-get -s upgrade / dist-upgrade` outputs (tests/fixtures/apt/;
+# pending.txt is python-docker's published image of 24 Oct 2026, before CVE-2026-111497's libbrotli1 fix).
+osu() { env OS_UPDATES_FILE="$FIX/apt/$1.txt" "$ROOT/tests/os-updates.sh" image 2>&1; }
+expect_fail "os-updates: Debian security updates pending -> refused" "FAIL 7 Debian update(s) missing" osu pending
+expect_fail "os-updates: names the package and both versions" "libbrotli1 1.1.0-2+b7 -> 1.1.0-2+deb13u1" osu pending
+expect_fail "os-updates: stable-updates counts too" "tzdata 2026c-0+deb13u1 -> 2026e-0+deb13u1" osu pending
+expect_ok "os-updates: nothing pending -> accepted" "  ok   no Debian update pending" osu clean
+expect_ok "os-updates: a third-party repository (nginx.org) is not counted" "  ok   no Debian update pending" osu third-party
+expect_ok "os-updates: what only dist-upgrade would do is a warning" "$(printf '%s\n' \
+    "  WARNING only dist-upgrade would apply (new or removed packages; not done, a human decides):" \
+    "    libfoo-common none -> 1.0-1+deb13u1" "    libfoo-old1 removed" "    libfoo1 1.0-1 -> 1.0-1+deb13u1" \
+    "  ok   no Debian update pending")" osu kept-back
+printf 'Err:1 http://deb.debian.org/debian trixie InRelease\n' >"$tmp/apt-broken.txt"
+expect_fail "os-updates: an apt output without both simulations -> refused" "FAIL unexpected apt-get output" \
+    env OS_UPDATES_FILE="$tmp/apt-broken.txt" "$ROOT/tests/os-updates.sh" image
+
 if [ "$FAILED" = 0 ]; then echo "all unit tests passed"; else echo "unit tests FAILED" >&2; exit 1; fi

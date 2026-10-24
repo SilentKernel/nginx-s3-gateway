@@ -1,7 +1,9 @@
 # Base version: build.sh passes the latest 1.30.x (scripts/resolve-versions.sh); the default is for
 # a plain `docker build` (upstream GitHub workflow, test.sh).
 ARG NGINX_VERSION=1.30.6
-FROM nginx:${NGINX_VERSION}
+# Two stages: "gateway" (modules, guard, config; cached, it only changes with the nginx base) and
+# "os-updates" (the day's Debian updates; never cached by build.sh, see docker-bake.hcl).
+FROM nginx:${NGINX_VERSION} AS gateway
 
 # Security floor (versions.env, passed by build.sh). Empty: no check.
 ARG MIN_NGINX_VERSION=""
@@ -33,11 +35,8 @@ ENV PREFIX_LEADING_DIRECTORY_PATH=""
 
 # NGINX_VERSION, NJS_VERSION, NJS_RELEASE and DYNPKG_RELEASE are inherited too: the modules are pinned
 # to the exact nginx of the base image (unpinned, apt takes the newest module, built for another
-# nginx). Debian's updates are applied before nginx.org's repository is added, so the upgrade never
-# touches nginx itself.
+# nginx). Debian's updates are applied by the os-updates stage below.
 RUN set -x \
-    && apt-get update \
-    && apt-get upgrade -y --no-install-recommends \
     && echo "deb [signed-by=/etc/apt/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/debian/ $(echo $PKG_RELEASE | cut -f2 -d~) nginx" >> /etc/apt/sources.list.d/nginx.list \
     && apt-get update \
     && apt-get install --no-install-recommends --no-install-suggests -y \
@@ -65,3 +64,16 @@ RUN set -x \
     && mkdir -p /var/cache/nginx/s3_proxy \
     && chown nginx:nginx /var/cache/nginx/s3_proxy \
     && find /docker-entrypoint.d -type f \( -name '*.sh' -or -name '*.envsh' \) -exec chmod -v +x {} \;
+
+# Debian's updates of the day (security fixes first), without waiting for Docker Hub to rebuild
+# nginx:${NGINX_VERSION}. Never taken from the build cache by build.sh (no-cache-filter in
+# docker-bake.hcl), so only this stage (and Dockerfile.unprivileged's) runs again each night.
+# Debian's archive only (debian.sources; nginx.org's nginx.list, added above, is left out): the
+# upgrade never touches nginx or its modules, which stay pinned to the base image's nginx. `upgrade`,
+# not `dist-upgrade`: no package added or removed; tests/os-updates.sh checks nothing is left.
+FROM gateway AS os-updates
+RUN set -eux; \
+    debian_only="-o Dir::Etc::sourcelist=/etc/apt/sources.list.d/debian.sources -o Dir::Etc::sourceparts=-"; \
+    apt-get update -o APT::Update::Error-Mode=any $debian_only; \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::=--force-confold $debian_only; \
+    rm -rf /var/lib/apt/lists/*

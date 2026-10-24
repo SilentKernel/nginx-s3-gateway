@@ -21,7 +21,8 @@ On runner `base-images-amd64` (Admin or any of its projects > Settings > CI/CD >
 Settings > CI/CD > Runners > Project runners. `concurrent = 1` on the VM queues it with the other
 nightlies; the `build` job also takes the `nginx-s3-gateway` resource group.
 
-Outbound HTTPS needed on top of the other projects: `nginx.org` (njs/xslt packages),
+Outbound HTTPS needed on top of the other projects: `nginx.org` (njs/xslt packages; the image keeps
+its repository, so `tests/os-updates.sh`'s `apt-get update` needs it every night too),
 `hub.docker.com` (tag lookup), Docker Hub registry (pulls only: `nginx`, `pgsty/minio`,
 `aquasec/trivy`).
 

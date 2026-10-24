@@ -1,5 +1,6 @@
 # Driven by build.sh, which exports versions.env and the resolved version. Two stages:
-#   oss           Dockerfile.oss on nginx:${NGINX_VERSION} (njs, S3 gateway config)
+#   oss           Dockerfile.oss on nginx:${NGINX_VERSION} (njs, S3 gateway config, then the day's
+#                 Debian updates)
 #   unprivileged  Dockerfile.unprivileged on top of it (port 8080, user nginx): what we publish
 # The "nginx-s3-gateway" image Dockerfile.unprivileged starts FROM is the oss target itself, never a
 # local tag: another build on the same Docker engine cannot swap it.
@@ -21,6 +22,10 @@ target "_common" {
 target "oss" {
   inherits   = ["_common"]
   dockerfile = "Dockerfile.oss"
+  # Never from the cache: apt-get upgrade must bring the day's Debian updates (the gateway stage, with
+  # the modules pinned to the base nginx, stays cached). Set here, on the target that has the stage:
+  # unprivileged only reuses this target's result.
+  no-cache-filter = ["os-updates"]
   args = {
     NGINX_VERSION     = NGINX_VERSION
     MIN_NGINX_VERSION = MIN_NGINX_VERSION

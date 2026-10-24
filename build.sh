@@ -15,7 +15,8 @@
 # production uses) and latest.
 #
 # Before anything is pushed, the candidate must pass: tests/smoke.sh (versions, packages, unprivileged
-# layout, startup as nginx / arbitrary uid / read-only, njs unit tests), tests/integration.sh
+# layout, startup as nginx / arbitrary uid / read-only, njs unit tests), tests/os-updates.sh (no
+# Debian update pending), tests/integration.sh
 # (upstream's HTTP API suite against MinIO, every configuration of test.sh), tests/negative.sh (the
 # gates still catch broken images) and tests/scan.sh (no new fixable CRITICAL CVE). tests/guard.sh
 # runs as its own CI job. The candidate lives under a private local name until the push: another
@@ -100,8 +101,9 @@ TAGS="$CANDIDATE"
 export TAGS SOURCE_COMMIT BUILD_DATE
 
 echo "==> building nginx ${NGINX_VERSION} (floor ${MIN_NGINX_VERSION}), ${PLATFORM}"
-# --pull refreshes nginx:${NGINX_VERSION} (docker-library rebuilds it on Debian updates); --load puts
-# the result in the local engine for the tests.
+# --pull refreshes nginx:${NGINX_VERSION} (docker-library rebuilds it on Debian updates, but not
+# always soon); Dockerfile.oss's os-updates stage (never cached) applies the Debian updates published
+# since; --load puts the result in the local engine for the tests.
 docker buildx bake --pull --load unprivileged
 
 CANDIDATE_ID="$(docker image inspect -f '{{.Id}}' "$CANDIDATE")"
@@ -109,6 +111,8 @@ echo "==> candidate ${CANDIDATE} (${CANDIDATE_ID})"
 
 echo "==> smoke test"
 "$ROOT/tests/smoke.sh" "$CANDIDATE"
+echo "==> Debian updates (none may be pending)"
+"$ROOT/tests/os-updates.sh" "$CANDIDATE"
 echo "==> integration test (upstream API suite against MinIO)"
 "$ROOT/tests/integration.sh" "$CANDIDATE"
 echo "==> negative tests (the gates catch broken images)"

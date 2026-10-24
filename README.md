@@ -11,7 +11,7 @@
 ## Our nightly build (fork)
 
 This fork publishes the **unprivileged** image (port 8080, user `nginx`), rebuilt every night by
-GitLab CI on the latest **nginx 1.30.x** with Debian's updates, after every gate passed:
+GitLab CI on the latest **nginx 1.30.x** with **Debian's updates of the day**, after every gate passed:
 
 | Tag (in `registry.developpeur-freelance.io/silent/nginx-s3-gateway-docker`; no longer on Docker Hub) | Use |
 |---|---|
@@ -29,9 +29,22 @@ tests/unit.sh                    # offline tests of scripts/
 
 Settings live in `versions.env` (series `NGINX_SERIES=1.30`, security floor `MIN_NGINX_VERSION`,
 registry). Gates, in order: version lookup (`scripts/resolve-versions.sh`), floor guard and module
-pinning (`Dockerfile.oss`), no downgrade of the moving tag, `tests/smoke.sh`, `tests/integration.sh`
-(upstream's API suite against MinIO, every configuration of `test.sh`), `tests/negative.sh`,
-`tests/scan.sh` (Trivy: no new fixable CRITICAL), then a push verified tag by tag.
+pinning (`Dockerfile.oss`), no downgrade of the moving tag, `tests/smoke.sh`, `tests/os-updates.sh`
+(online: no update from Debian's archive may be pending; what only `dist-upgrade` would apply is a
+WARNING; nginx.org's packages are not counted), `tests/integration.sh` (upstream's API suite against
+MinIO, every configuration of `test.sh`), `tests/negative.sh` (also: `tests/os-updates.sh` refuses
+an old trixie snapshot, `debian:trixie-20250811` pinned by digest, and accepts the candidate),
+`tests/scan.sh` (Trivy: no new fixable CRITICAL), then a push verified tag by tag. `tests/unit.sh`
+also covers `tests/os-updates.sh`'s parsing on captured apt outputs (`tests/fixtures/apt/`).
+
+Debian's updates: `Dockerfile.oss` has two stages. `gateway` (njs/xslt pinned to the base image's
+nginx, the floor guard, the config) stays in the build cache; its last stage `os-updates` runs
+`apt-get update && apt-get upgrade` on Debian's archive only (`debian.sources`; nginx.org's list is
+left out, so nginx and its modules are never upgraded) and is never taken from the cache
+(`no-cache-filter` on the `oss` target in `docker-bake.hcl`). Before 24 Oct 2026 the upgrade ran in
+the cached stage, so it only ran again when `nginx:1.30.x` changed: the published image still had
+`libbrotli1 1.1.0-2+b7` (CVE-2026-111497) days after DSA-6582-1. `upgrade`, not `dist-upgrade`:
+no package is added or removed.
 CI and runner setup: [`docs/runner.md`](docs/runner.md).
 
 ## Introduction

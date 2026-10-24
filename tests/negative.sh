@@ -62,4 +62,12 @@ refused "broken AWS v4 signature (njs unit tests)" "njs unit test awssig4_test.j
 refused "broken AWS v4 signature (integration against MinIO)" "test_api.sh failed" \
     env INTEGRATION_QUICK=1 "$ROOT/tests/integration.sh" "$sigv4_broken"
 
+# Debian updates not applied: an old trixie snapshot (pinned by digest, so it always has pending
+# updates) must be refused by tests/os-updates.sh, and the candidate accepted.
+OLD_TRIXIE=debian:trixie-20250811@sha256:6d87375016340817ac2391e670971725a9981cfc24e221c47734681ed0f6c0f5
+refused "Debian updates missing (trixie of 11 Aug 2025)" "Debian update(s) missing" \
+    "$ROOT/tests/os-updates.sh" "$OLD_TRIXIE"
+if "$ROOT/tests/os-updates.sh" "$CANDIDATE" >"$log" 2>&1; then echo "ok   the candidate passes os-updates.sh"
+else tail -5 "$log" >&2; echo "FAIL: the candidate itself is refused by os-updates.sh" >&2; exit 1; fi
+
 echo "all negative tests passed: every broken variant was refused"

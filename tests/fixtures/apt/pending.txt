@@ -1,0 +1,46 @@
+@@upgrade
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+The following packages will be upgraded:
+  libbrotli-dev libbrotli1 libheif-plugin-dav1d libheif-plugin-libde265
+  libheif1 libunbound8 tzdata
+7 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+Inst tzdata [2026c-0+deb13u1] (2026e-0+deb13u1 Debian:13-updates/stable-updates [all])
+Inst libbrotli-dev [1.1.0-2+b7] (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64]) []
+Inst libbrotli1 [1.1.0-2+b7] (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64])
+Inst libheif-plugin-dav1d [1.23.4-1~deb13u1] (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64]) [libheif1:amd64 ]
+Inst libheif1 [1.23.4-1~deb13u1] (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64]) [libheif-plugin-libde265:amd64 ]
+Inst libheif-plugin-libde265 [1.23.4-1~deb13u1] (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Inst libunbound8 [1.26.1-0+deb13u1] (1.26.2-0+deb13u1 Debian-Security:13/stable-security [amd64])
+Conf tzdata (2026e-0+deb13u1 Debian:13-updates/stable-updates [all])
+Conf libbrotli-dev (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libbrotli1 (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libheif-plugin-dav1d (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libheif1 (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libheif-plugin-libde265 (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libunbound8 (1.26.2-0+deb13u1 Debian-Security:13/stable-security [amd64])
+@@dist-upgrade
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+The following packages will be upgraded:
+  libbrotli-dev libbrotli1 libheif-plugin-dav1d libheif-plugin-libde265
+  libheif1 libunbound8 tzdata
+7 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+Inst tzdata [2026c-0+deb13u1] (2026e-0+deb13u1 Debian:13-updates/stable-updates [all])
+Inst libbrotli-dev [1.1.0-2+b7] (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64]) []
+Inst libbrotli1 [1.1.0-2+b7] (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64])
+Inst libheif-plugin-dav1d [1.23.4-1~deb13u1] (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64]) [libheif1:amd64 ]
+Inst libheif1 [1.23.4-1~deb13u1] (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64]) [libheif-plugin-libde265:amd64 ]
+Inst libheif-plugin-libde265 [1.23.4-1~deb13u1] (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Inst libunbound8 [1.26.1-0+deb13u1] (1.26.2-0+deb13u1 Debian-Security:13/stable-security [amd64])
+Conf tzdata (2026e-0+deb13u1 Debian:13-updates/stable-updates [all])
+Conf libbrotli-dev (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libbrotli1 (1.1.0-2+deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libheif-plugin-dav1d (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libheif1 (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libheif-plugin-libde265 (1.23.6-2~deb13u1 Debian-Security:13/stable-security [amd64])
+Conf libunbound8 (1.26.2-0+deb13u1 Debian-Security:13/stable-security [amd64])
