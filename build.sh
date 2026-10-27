@@ -130,7 +130,9 @@ echo "==> vulnerability gate (no new fixable CRITICAL against the published imag
 # the tested image ID must be one of them, whatever image store the local engine uses.
 served_ids() {
     local tag="$1" top raw out child
-    top="$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')" || return 1
+    # {{json .Manifest}}, never {{.Manifest.Digest}}: older buildx versions print their
+    # human-readable block for any format starting with {{.Manifest (served-ids.py --digest reads both)
+    top="$(docker buildx imagetools inspect "$tag" --format '{{json .Manifest}}' | python3 -I "$ROOT/scripts/served-ids.py" --digest)" || return 1
     raw="$(docker buildx imagetools inspect "$tag" --raw)" || return 1
     out="$(python3 -I "$ROOT/scripts/served-ids.py" "$top" "$raw" "$PLATFORM")" || return 1
     if [[ "$out" == need-child\ * ]]; then
