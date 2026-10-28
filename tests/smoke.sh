@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test of a built unprivileged nginx-s3-gateway image: tests/smoke.sh <image>
+# Versions, unprivileged layout, the server (healthy by its HEALTHCHECK, /tmp/drain, unhealthy
+# without nginx), njs unit tests.
 # Exits non-zero on the first failed check. Needs Docker on the host.
 set -euo pipefail
 
@@ -58,6 +60,13 @@ grep -q 'listen 8080;' <<<"$(run cat /etc/nginx/templates/default.conf.template)
 grep -q 'http://127.0.0.1:8080' <<<"$(run cat /etc/nginx/include/s3gateway.js)" || fail "s3gateway.js does not loop back to 8080"
 pass "port 8080, pid and temp paths in /tmp, no user directive"
 
+# Healthcheck (what docker rollout waits for): the exact configuration here, its behaviour in 3.
+HC_EXPECTED='[CMD-SHELL test ! -f /tmp/drain && curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8080/health || exit 1] 10s 3s 30s 1s 3'
+hc="$(docker image inspect -f '{{with .Config.Healthcheck}}{{.Test}} {{.Interval}} {{.Timeout}} {{.StartPeriod}} {{.StartInterval}} {{.Retries}}{{else}}none{{end}}' "$TARGET")"
+case "$hc" in none|"[NONE] "*) fail "no HEALTHCHECK in the image" ;; esac   # [NONE]: HEALTHCHECK NONE
+[ "$hc" = "$HC_EXPECTED" ] || fail "HEALTHCHECK is [$hc], expected [$HC_EXPECTED]"
+pass "HEALTHCHECK: /tmp/drain + curl :8080/health, every 10s (1s while starting), 3 retries"
+
 # 3. The server itself, as the image user and as an arbitrary uid of group 0 (OpenShift-style)
 env_args=(-e S3_BUCKET_NAME=smoke -e S3_SERVER=127.0.0.1 -e S3_SERVER_PORT=9000 -e S3_SERVER_PROTO=http
     -e S3_REGION=us-east-1 -e S3_STYLE=path -e ALLOW_DIRECTORY_LIST=false -e AWS_SIGS_VERSION=4
@@ -65,17 +74,32 @@ env_args=(-e S3_BUCKET_NAME=smoke -e S3_SERVER=127.0.0.1 -e S3_SERVER_PORT=9000 
 cids=()
 trap 'for c in "${cids[@]}"; do docker rm -f "$c" >/dev/null 2>&1 || true; done' EXIT
 
-serve() {   # serve <description> [docker run options...]
+# wait_health <container> <status> <seconds>: until Docker reports that health status.
+wait_health() {
+    local cid="$1" want="$2" got=""
+    for _ in $(seq 1 $(($3 * 2))); do
+        got="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid")"
+        [ "$got" = "$want" ] && return 0
+        sleep 0.5
+    done
+    echo "health is [${got}] after $3 s, expected [${want}]; checks: $(docker inspect -f '{{with .State.Health}}{{json .Log}}{{end}}' "$cid" | tail -c 600)" >&2
+    return 1
+}
+
+serve() {   # serve <description> [docker run options...]: the container id is left in $SERVED
     local what="$1" cid
     shift
     cid="$(docker run -d --platform "$PLATFORM" "$@" "${env_args[@]}" "$TARGET")"
     cids+=("$cid")
+    SERVED="$cid"
     for _ in $(seq 1 30); do
         if [ "$(docker exec "$cid" curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health 2>/dev/null)" = 200 ]; then
             local owner
             owner="$(docker exec "$cid" stat -c %u /proc/1)"
             [ "$owner" != 0 ] || fail "${what}: nginx master runs as root"
             pass "${what}: /health 200 on :8080, master uid ${owner}"
+            wait_health "$cid" healthy 15 || fail "${what}: never healthy with the image's HEALTHCHECK"
+            pass "${what}: healthy"
             return 0
         fi
         if [ "$(docker inspect -f '{{.State.Running}}' "$cid")" != true ]; then
@@ -91,6 +115,23 @@ serve() {   # serve <description> [docker run options...]
 serve "as nginx"
 serve "as uid 12345, group 0" --user 12345:0
 serve "read-only root filesystem with tmpfs" --read-only --tmpfs /tmp --tmpfs /var/cache/nginx:uid=101,gid=0 --tmpfs /etc/nginx/conf.d:uid=101,gid=0
+
+# The same healthcheck command, checked every second and unhealthy at the first failure: seconds
+# instead of the 30 s the production timings need. Drain on the read-only layout (/tmp a tmpfs).
+FAST=(--health-interval=1s --health-retries=1 --health-start-period=1ms)
+serve "read-only, fast healthcheck timings" "${FAST[@]}" --read-only --tmpfs /tmp --tmpfs /var/cache/nginx:uid=101,gid=0 --tmpfs /etc/nginx/conf.d:uid=101,gid=0
+docker exec "$SERVED" touch /tmp/drain
+wait_health "$SERVED" unhealthy 10 || fail "still healthy with /tmp/drain: docker rollout could not drain it"
+[ "$(docker exec "$SERVED" curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health)" = 200 ] \
+    || fail "the gateway stopped serving while draining"
+docker exec "$SERVED" rm /tmp/drain
+wait_health "$SERVED" healthy 10 || fail "not healthy again once /tmp/drain is removed"
+pass "/tmp/drain: unhealthy while it exists (gateway still serving), healthy again without it"
+
+cid="$(docker run -d --platform "$PLATFORM" "${FAST[@]}" --entrypoint sleep "$TARGET" infinity)"
+cids+=("$cid")
+wait_health "$cid" unhealthy 10 || fail "healthy although nginx is not running: the HEALTHCHECK does not test the gateway"
+pass "unhealthy when nginx does not run"
 
 # 4. njs unit tests of upstream (test/unit), run by the image's own njs, as test.sh does
 unit() {   # unit <file> [extra docker env...]

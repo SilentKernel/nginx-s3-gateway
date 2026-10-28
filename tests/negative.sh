@@ -62,6 +62,24 @@ refused "broken AWS v4 signature (njs unit tests)" "njs unit test awssig4_test.j
 refused "broken AWS v4 signature (integration against MinIO)" "test_api.sh failed" \
     env INTEGRATION_QUICK=1 "$ROOT/tests/integration.sh" "$sigv4_broken"
 
+# Healthcheck: removed, retimed, or answering without looking at the gateway. The curl wrappers lie
+# only to the healthcheck (the one call with --max-time); smoke.sh's own requests get the real curl.
+curl_wrapper() {   # curl_wrapper <exit code for the healthcheck>: Dockerfile lines
+    cat <<EOF
+USER root
+RUN printf '#!/bin/sh\\ncase " \$* " in *" --max-time "*) exit $1;; esac\\nexec /usr/bin/curl "\$@"\\n' > /usr/local/bin/curl && chmod +x /usr/local/bin/curl
+USER nginx
+EOF
+}
+refused "image without HEALTHCHECK" "no HEALTHCHECK in the image" \
+    "$ROOT/tests/smoke.sh" "$(variant no-healthcheck 'HEALTHCHECK NONE')"
+refused "HEALTHCHECK on port 80, every 5 minutes" "HEALTHCHECK is [[CMD-SHELL curl" \
+    "$ROOT/tests/smoke.sh" "$(variant healthcheck-80 'HEALTHCHECK --interval=5m CMD curl -fsS -o /dev/null http://127.0.0.1/health || exit 1')"
+refused "healthcheck passing without the gateway" "healthy although nginx is not running" \
+    "$ROOT/tests/smoke.sh" "$(variant always-healthy "$(curl_wrapper 0)")"
+refused "healthcheck that never passes" "never healthy with the image's HEALTHCHECK" \
+    "$ROOT/tests/smoke.sh" "$(variant never-healthy "$(curl_wrapper 7)")"
+
 # Debian updates not applied: an old trixie snapshot (pinned by digest, so it always has pending
 # updates) must be refused by tests/os-updates.sh, and the candidate accepted.
 OLD_TRIXIE=debian:trixie-20250811@sha256:6d87375016340817ac2391e670971725a9981cfc24e221c47734681ed0f6c0f5

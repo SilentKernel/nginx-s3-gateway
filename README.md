@@ -45,6 +45,14 @@ left out, so nginx and its modules are never upgraded) and is never taken from t
 the cached stage, so it only ran again when `nginx:1.30.x` changed: the published image still had
 `libbrotli1 1.1.0-2+b7` (CVE-2026-111497) days after DSA-6582-1. `upgrade`, not `dist-upgrade`:
 no package is added or removed.
+Healthcheck (`Dockerfile.unprivileged`): healthy while `http://127.0.0.1:8080/health` answers,
+checked every second for the first 30 s, then every 10 s, unhealthy after 3 failures in a row
+(`docker ps` shows `(healthy)`; docker rollout waits for it). While `/tmp/drain` exists it is
+unhealthy on purpose, for docker rollout's drain step (`--pre-stop-hook "touch /tmp/drain && sleep 35"`;
+with a read-only root, `/tmp` must be a tmpfs). `tests/smoke.sh` checks the exact configuration,
+healthy in every run, drain, unhealthy without nginx; `tests/negative.sh` refuses an image without
+it, with another one, or with one that does not look at the gateway.
+
 CI and runner setup: [`docs/runner.md`](docs/runner.md).
 
 ## Introduction
