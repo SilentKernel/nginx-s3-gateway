@@ -6,6 +6,7 @@
 # negative tests, CVE report) runs inside build.sh before anything is pushed.
 #
 # CI/CD variables (Settings > CI/CD > Variables): NTFY_TOPIC (notifications; unset = none),
+# NTFY_TOPIC_NEWBASE (instance level, masked: the "new version" message only; unset = not sent),
 # NTFY_TOKEN (masked, optional).
 #
 # The GitHub workflows in .github/ are upstream's (nginx/nginx-s3-gateway); GitLab ignores them.

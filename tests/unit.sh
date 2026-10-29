@@ -153,6 +153,31 @@ if [ "$(cat "$tmp/requests.jsonl.get" | grep -c '^/v2/repositories/library/nginx
     pass "Docker Hub requests: name=1.30. filter, pages of 100, both pages fetched"
 else bad "Docker Hub requests: $(tr '\n' ' ' < "$tmp/requests.jsonl.get")"; fi
 
+echo "--- build.sh: the new-base message goes to NTFY_TOPIC_NEWBASE, never to NTFY_TOPIC"
+# The exact call of build.sh (from its package,arrow_up line to the end of the command), run against
+# the stand-in: a version bump is the one message of the important channel (refresh the server).
+newbase_call="$(awk '/package,arrow_up/ {on=1} on {print; if ($0 !~ /\\$/) exit}' "$ROOT/build.sh")"
+if [ "$(grep -c 'package,arrow_up' "$ROOT/build.sh")" = 1 ] \
+    && grep -qF 'NTFY_TOPIC="${NTFY_TOPIC_NEWBASE:-}" "$ROOT/scripts/notify.sh" default "package,arrow_up"' <<<"$newbase_call"
+then pass "build.sh sends its one new-base message with NTFY_TOPIC=\${NTFY_TOPIC_NEWBASE}"
+else bad "build.sh new-base message not on NTFY_TOPIC_NEWBASE: [$newbase_call]"; fi
+sent_before="$(wc -l < "$tmp/requests.jsonl")"
+env -i PATH="$PATH" ROOT="$ROOT" NTFY_URL="http://127.0.0.1:$port" NTFY_TOPIC=main-test NTFY_TOPIC_NEWBASE=newbase-test \
+    bash -c "$newbase_call" >/dev/null
+if tail -n +"$((sent_before + 1))" "$tmp/requests.jsonl" | python3 -I -c '
+import json, sys
+r = [json.loads(l) for l in sys.stdin]
+assert [x["path"] for x in r] == ["/newbase-test"], r
+assert r[0]["headers"]["Tags"] == "package,arrow_up", r
+'
+then pass "new base: one request, to the NTFY_TOPIC_NEWBASE topic, none to NTFY_TOPIC"
+else bad "new-base request did not go (only) to NTFY_TOPIC_NEWBASE"; fi
+sent_before="$(wc -l < "$tmp/requests.jsonl")"
+out="$(env -i PATH="$PATH" ROOT="$ROOT" NTFY_URL="http://127.0.0.1:$port" NTFY_TOPIC=main-test bash -c "$newbase_call")"
+if [[ "$out" == "notify: NTFY_TOPIC not set, skipped: "* ]] && [ "$(wc -l < "$tmp/requests.jsonl")" = "$sent_before" ]
+then pass "NTFY_TOPIC_NEWBASE unset: new-base message skipped, not sent to NTFY_TOPIC"
+else bad "NTFY_TOPIC_NEWBASE unset: got [$out]"; fi
+
 kill "$server_pid"; wait "$server_pid" 2>/dev/null || true; server_pid=""
 expect_fail "Docker Hub unreachable" "cannot reach Docker Hub" \
     resolve NGINX_TAGS_JSON_FILE= DOCKERHUB_API_URL="http://127.0.0.1:$port"

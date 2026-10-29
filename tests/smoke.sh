@@ -72,7 +72,8 @@ env_args=(-e S3_BUCKET_NAME=smoke -e S3_SERVER=127.0.0.1 -e S3_SERVER_PORT=9000 
     -e S3_REGION=us-east-1 -e S3_STYLE=path -e ALLOW_DIRECTORY_LIST=false -e AWS_SIGS_VERSION=4
     -e AWS_ACCESS_KEY_ID=smoke -e AWS_SECRET_ACCESS_KEY=smoke)
 cids=()
-trap 'for c in "${cids[@]}"; do docker rm -f "$c" >/dev/null 2>&1 || true; done' EXIT
+remove_containers() { local c; for c in ${cids[@]+"${cids[@]}"}; do docker rm -f "$c" >/dev/null 2>&1 || true; done; }
+trap remove_containers EXIT
 
 # wait_health <container> <status> <seconds>: until Docker reports that health status.
 wait_health() {

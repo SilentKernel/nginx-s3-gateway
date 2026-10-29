@@ -159,7 +159,8 @@ if [ "$PUSH" = 1 ]; then
     echo "==> pushing to ${IMAGE} (moving tag and latest last)"
     while read -r tag; do push_tested "$tag"; done < <(tags_of "$IMAGE")
     if [ "$PUBLISHED_NGINX" != "$NGINX_VERSION" ]; then
-        "$ROOT/scripts/notify.sh" default "package,arrow_up" \
+        # A new version to roll out: the important channel (NTFY_TOPIC_NEWBASE), not NTFY_TOPIC.
+        NTFY_TOPIC="${NTFY_TOPIC_NEWBASE:-}" "$ROOT/scripts/notify.sh" default "package,arrow_up" \
             "New nginx-s3-gateway: nginx ${NGINX_VERSION}" \
             "${TAG_MOVING} moved from nginx ${PUBLISHED_NGINX:-none}. Pull it and restart the gateways."
     fi
