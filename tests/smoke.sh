@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke test of a built unprivileged nginx-s3-gateway image: tests/smoke.sh <image>
-# Versions, unprivileged layout, the server (healthy by its HEALTHCHECK, /tmp/drain, unhealthy
-# without nginx), njs unit tests.
+# Versions, unprivileged layout, the server in front of MinIO (healthy by its HEALTHCHECK, /tmp/drain, the DEEP
+# /health: 503 and unhealthy with wrong keys or S3 gone, healthy again when it is back; unhealthy without nginx),
+# njs unit tests.
 # Exits non-zero on the first failed check. Needs Docker on the host.
 set -euo pipefail
 
@@ -66,14 +67,27 @@ hc="$(docker image inspect -f '{{with .Config.Healthcheck}}{{.Test}} {{.Interval
 case "$hc" in none|"[NONE] "*) fail "no HEALTHCHECK in the image" ;; esac   # [NONE]: HEALTHCHECK NONE
 [ "$hc" = "$HC_EXPECTED" ] || fail "HEALTHCHECK is [$hc], expected [$HC_EXPECTED]"
 pass "HEALTHCHECK: /tmp/drain + curl :8080/health, every 10s (1s while starting), 3 retries"
+docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$TARGET" | grep -qx 'HEALTH_CACHE_VALID=5m' \
+    || fail "HEALTH_CACHE_VALID is not 5m in the image: the deep /health would ask the bucket too often"
+pass "deep /health keeps S3's answer 5 minutes (HEALTH_CACHE_VALID=5m): the bucket is not asked every second"
 
-# 3. The server itself, as the image user and as an arbitrary uid of group 0 (OpenShift-style)
-env_args=(-e S3_BUCKET_NAME=smoke -e S3_SERVER=127.0.0.1 -e S3_SERVER_PORT=9000 -e S3_SERVER_PROTO=http
-    -e S3_REGION=us-east-1 -e S3_STYLE=path -e ALLOW_DIRECTORY_LIST=false -e AWS_SIGS_VERSION=4
-    -e AWS_ACCESS_KEY_ID=smoke -e AWS_SECRET_ACCESS_KEY=smoke)
+# 3. The server itself, as the image user and as an arbitrary uid of group 0 (OpenShift-style), in front of a real S3
+# (MinIO, the integration test's pinned image, bucket `smoke`): /health is DEEP, it asks S3 (200 only when S3 answers)
+MINIO_IMAGE="${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372}"
+SNET="s3gw-smoke-$$"
 cids=()
-remove_containers() { local c; for c in ${cids[@]+"${cids[@]}"}; do docker rm -f "$c" >/dev/null 2>&1 || true; done; }
+remove_containers() { local c; for c in ${cids[@]+"${cids[@]}"}; do docker rm -f "$c" >/dev/null 2>&1 || true; done; docker network rm "$SNET" >/dev/null 2>&1 || true; }
 trap remove_containers EXIT
+docker network create "$SNET" >/dev/null
+minio="$(docker run -d --network "$SNET" --network-alias minio -e MINIO_ROOT_USER=smokeuser -e MINIO_ROOT_PASSWORD=smokepassword \
+    -e MINIO_REGION_NAME=us-east-1 -e MINIO_BROWSER=off "$MINIO_IMAGE" minio server /data)"
+cids+=("$minio")
+for _ in $(seq 1 30); do docker exec "$minio" curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live 2>/dev/null && break; sleep 1; done
+docker exec "$minio" sh -c 'mc alias set t http://127.0.0.1:9000 smokeuser smokepassword >/dev/null && mc mb t/smoke >/dev/null' || fail "MinIO: bucket smoke"
+env_args=(--network "$SNET" -e S3_BUCKET_NAME=smoke -e S3_SERVER=minio -e S3_SERVER_PORT=9000 -e S3_SERVER_PROTO=http
+    -e S3_REGION=us-east-1 -e S3_STYLE=path -e ALLOW_DIRECTORY_LIST=false -e AWS_SIGS_VERSION=4
+    -e AWS_ACCESS_KEY_ID=smokeuser -e AWS_SECRET_ACCESS_KEY=smokepassword -e HEALTH_CACHE_VALID=2s)
+# (HEALTH_CACHE_VALID: 2 s here instead of the image's 5m, so S3 stopping shows within seconds)
 
 # wait_health <container> <status> <seconds>: until Docker reports that health status.
 wait_health() {
@@ -128,6 +142,23 @@ wait_health "$SERVED" unhealthy 10 || fail "still healthy with /tmp/drain: docke
 docker exec "$SERVED" rm /tmp/drain
 wait_health "$SERVED" healthy 10 || fail "not healthy again once /tmp/drain is removed"
 pass "/tmp/drain: unhealthy while it exists (gateway still serving), healthy again without it"
+
+# DEEP: /health asks S3. Wrong keys: 503 and unhealthy (docker rollout keeps the old copy); S3 gone: 503 once the
+# cached answer expires, unhealthy; S3 back: 200, healthy again
+cid="$(docker run -d --platform "$PLATFORM" "${FAST[@]}" "${env_args[@]}" -e AWS_SECRET_ACCESS_KEY=wrong-secret "$TARGET")"
+cids+=("$cid")
+for _ in $(seq 1 30); do c="$(docker exec "$cid" curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health 2>/dev/null || true)"; [ "$c" = 503 ] && break; sleep 1; done
+[ "$c" = 503 ] || fail "deep health: /health answered [$c] with a wrong secret key (want 503)"
+wait_health "$cid" unhealthy 15 || fail "deep health: healthy with a wrong secret key"
+pass "deep /health: a wrong secret key -> 503, unhealthy"
+docker stop -t 1 "$minio" >/dev/null
+for _ in $(seq 1 15); do c="$(docker exec "$SERVED" curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/health 2>/dev/null || true)"; [ "$c" = 503 ] && break; sleep 1; done
+[ "$c" = 503 ] || fail "deep health: /health answered [$c] with S3 stopped (want 503)"
+wait_health "$SERVED" unhealthy 15 || fail "deep health: still healthy with S3 stopped"
+docker start "$minio" >/dev/null
+for _ in $(seq 1 30); do docker exec "$minio" curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live 2>/dev/null && break; sleep 1; done
+wait_health "$SERVED" healthy 20 || fail "deep health: not healthy again once S3 is back"
+pass "deep /health: S3 stopped -> 503, unhealthy; S3 back -> healthy"
 
 cid="$(docker run -d --platform "$PLATFORM" "${FAST[@]}" --entrypoint sleep "$TARGET" infinity)"
 cids+=("$cid")

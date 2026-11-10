@@ -14,6 +14,8 @@ ENV PROXY_CACHE_INACTIVE=60m
 ENV PROXY_CACHE_SLICE_SIZE=1m
 ENV PROXY_CACHE_VALID_OK=1h
 ENV PROXY_CACHE_VALID_NOTFOUND=1m
+# How long the deep /health keeps S3's answer (the bucket is asked at most that often; default.conf.template)
+ENV HEALTH_CACHE_VALID=5m
 ENV PROXY_CACHE_VALID_FORBIDDEN=30s
 
 # CORS env vars

@@ -53,11 +53,12 @@ RUN sed -i "s/listen 8080;/listen 80;/" /etc/nginx/templates/default.conf.templa
 USER nginx')"
 refused "other nginx version than expected" "expected 0.0.1" \
     env NGINX_VERSION=0.0.1 "$ROOT/tests/smoke.sh" "$CANDIDATE"
-# A wrong signature: the njs unit tests must catch it, and so must the real S3 server.
+# A wrong signature: the smoke test refuses it (S3 rejects it, so the deep /health never answers 200: caught before
+# the njs unit tests even run), and so does the integration test against the real S3 server.
 sigv4_broken="$(variant sigv4-broken 'USER root
 RUN sed -i "s/AWS4-HMAC-SHA256/AWS4-HMAC-SHA1/g" /etc/nginx/include/awssig4.js
 USER nginx')"
-refused "broken AWS v4 signature (njs unit tests)" "njs unit test awssig4_test.js" \
+refused "broken AWS v4 signature (smoke: the deep /health)" "/health never answered 200" \
     "$ROOT/tests/smoke.sh" "$sigv4_broken"
 refused "broken AWS v4 signature (integration against MinIO)" "test_api.sh failed" \
     env INTEGRATION_QUICK=1 "$ROOT/tests/integration.sh" "$sigv4_broken"
@@ -75,7 +76,9 @@ refused "image without HEALTHCHECK" "no HEALTHCHECK in the image" \
     "$ROOT/tests/smoke.sh" "$(variant no-healthcheck 'HEALTHCHECK NONE')"
 refused "HEALTHCHECK on port 80, every 5 minutes" "HEALTHCHECK is [[CMD-SHELL curl" \
     "$ROOT/tests/smoke.sh" "$(variant healthcheck-80 'HEALTHCHECK --interval=5m CMD curl -fsS -o /dev/null http://127.0.0.1/health || exit 1')"
-refused "healthcheck passing without the gateway" "healthy although nginx is not running" \
+# (refused by the first check that reads the HEALTHCHECK with something broken behind it: the deep /health case, a
+# wrong secret key, comes before "nginx not running")
+refused "healthcheck passing without the gateway" "deep health: healthy with a wrong secret key" \
     "$ROOT/tests/smoke.sh" "$(variant always-healthy "$(curl_wrapper 0)")"
 refused "healthcheck that never passes" "never healthy with the image's HEALTHCHECK" \
     "$ROOT/tests/smoke.sh" "$(variant never-healthy "$(curl_wrapper 7)")"

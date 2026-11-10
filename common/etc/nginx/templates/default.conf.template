@@ -78,8 +78,44 @@ server {
         return 404;
     }
 
-    location /health {
-        return 200;
+    # DEEP health (deploy-automation's HA standard: 200 only if the gateway can really serve): a signed GET of the
+    # object `health` (with the configured prefix) straight to S3, S3's own status read here, not through the gateway's
+    # error pages (they turn every S3 error into a 404). S3 answering 404 NoSuchKey (or 200, if such an object exists)
+    # proves the keys, the signature, the bucket and the network: 200. Anything else (403 bad keys, 5xx, S3 unreachable
+    # or too slow): 503. S3's answer is cached HEALTH_CACHE_VALID (default 5m: the checks of HAProxy, Docker and Kuma
+    # cost the bucket one request every 5 minutes, not every second), an error 10 s (seen again quickly once fixed); an
+    # unreachable S3 is never cached (no answer to cache): 503 at once. Used by the image's HEALTHCHECK (docker rollout keeps the old copy if a new one cannot reach S3),
+    # HAProxy and Uptime Kuma.
+    location = /health {
+        auth_request /aws/credentials/retrieve;
+        include /etc/nginx/conf.d/gateway/v${AWS_SIGS_VERSION}_headers.conf;
+        proxy_pass_request_headers off;
+        proxy_pass_request_body off;
+        proxy_ssl_server_name on;
+        proxy_ssl_name ${S3_SERVER};
+        proxy_set_header Authorization $s3auth;
+        proxy_set_header X-Amz-Security-Token $awsSessionToken;
+        proxy_set_header Host $s3_host;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 2s;
+        proxy_cache s3_cache;
+        proxy_cache_key "deep-health";
+        proxy_cache_valid 200 404 ${HEALTH_CACHE_VALID};
+        proxy_cache_valid any 10s;
+        proxy_intercept_errors on;
+        error_page 404 = @health_ok;
+        error_page 400 401 402 403 405 406 407 408 409 410 411 412 413 414 415 416 417 418 420 422 423 424 426 428 429 431 444 449 450 451 500 501 502 503 504 505 506 507 508 509 510 511 = @health_fail;
+        proxy_pass ${S3_SERVER_PROTO}://storage_urls$s3uri;
+    }
+    location @health_ok {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+    location @health_fail {
+        default_type text/plain;
+        return 503 "s3 unavailable\n";
     }
 
     location / {
