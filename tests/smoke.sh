@@ -62,11 +62,11 @@ grep -q 'http://127.0.0.1:8080' <<<"$(run cat /etc/nginx/include/s3gateway.js)" 
 pass "port 8080, pid and temp paths in /tmp, no user directive"
 
 # Healthcheck (what docker rollout waits for): the exact configuration here, its behaviour in 3.
-HC_EXPECTED='[CMD-SHELL test ! -f /tmp/drain && curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8080/health || exit 1] 10s 3s 30s 1s 3'
+HC_EXPECTED='[CMD-SHELL test ! -f /tmp/drain && curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8080/health || exit 1] 30s 3s 30s 1s 3'
 hc="$(docker image inspect -f '{{with .Config.Healthcheck}}{{.Test}} {{.Interval}} {{.Timeout}} {{.StartPeriod}} {{.StartInterval}} {{.Retries}}{{else}}none{{end}}' "$TARGET")"
 case "$hc" in none|"[NONE] "*) fail "no HEALTHCHECK in the image" ;; esac   # [NONE]: HEALTHCHECK NONE
 [ "$hc" = "$HC_EXPECTED" ] || fail "HEALTHCHECK is [$hc], expected [$HC_EXPECTED]"
-pass "HEALTHCHECK: /tmp/drain + curl :8080/health, every 10s (1s while starting), 3 retries"
+pass "HEALTHCHECK: /tmp/drain + curl :8080/health, every 30s (1s while starting), 3 retries"
 docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$TARGET" | grep -qx 'HEALTH_CACHE_VALID=5m' \
     || fail "HEALTH_CACHE_VALID is not 5m in the image: the deep /health would ask the bucket too often"
 pass "deep /health keeps S3's answer 5 minutes (HEALTH_CACHE_VALID=5m): the bucket is not asked every second"
