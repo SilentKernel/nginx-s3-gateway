@@ -87,6 +87,9 @@ server {
     # unreachable S3 is never cached (no answer to cache): 503 at once. Used by the image's HEALTHCHECK (docker rollout keeps the old copy if a new one cannot reach S3),
     # HAProxy and Uptime Kuma.
     location = /health {
+        # S3's own status in the log (log_format health, nginx.conf). A request is logged by the location where it
+        # ends: here when S3 answers 200, in @health_ok / @health_fail otherwise, so the three carry it.
+        access_log /var/log/nginx/access.log health;
         auth_request /aws/credentials/retrieve;
         include /etc/nginx/conf.d/gateway/v${AWS_SIGS_VERSION}_headers.conf;
         proxy_pass_request_headers off;
@@ -110,10 +113,12 @@ server {
         proxy_pass ${S3_SERVER_PROTO}://storage_urls$s3uri;
     }
     location @health_ok {
+        access_log /var/log/nginx/access.log health;
         default_type text/plain;
         return 200 "ok\n";
     }
     location @health_fail {
+        access_log /var/log/nginx/access.log health;
         default_type text/plain;
         return 503 "s3 unavailable\n";
     }

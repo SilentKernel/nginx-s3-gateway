@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Smoke test of a built unprivileged nginx-s3-gateway image: tests/smoke.sh <image>
 # Versions, unprivileged layout, the server in front of MinIO (healthy by its HEALTHCHECK, /tmp/drain, the DEEP
-# /health: 503 and unhealthy with wrong keys or S3 gone, healthy again when it is back; unhealthy without nginx),
-# njs unit tests.
+# /health: 503 and unhealthy with wrong keys or S3 gone, healthy again when it is back, S3's own status in its log
+# line; S3 reached over IPv4 only when its name also has an IPv6 address; unhealthy without nginx), njs unit tests.
 # Exits non-zero on the first failed check. Needs Docker on the host.
 set -euo pipefail
 
@@ -75,8 +75,9 @@ pass "deep /health keeps S3's answer 5 minutes (HEALTH_CACHE_VALID=5m): the buck
 # (MinIO, the integration test's pinned image, bucket `smoke`): /health is DEEP, it asks S3 (200 only when S3 answers)
 MINIO_IMAGE="${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372}"
 SNET="s3gw-smoke-$$"
+SNET6="s3gw-smoke6-$$"   # the IPv6 case below
 cids=()
-remove_containers() { local c; for c in ${cids[@]+"${cids[@]}"}; do docker rm -f "$c" >/dev/null 2>&1 || true; done; docker network rm "$SNET" >/dev/null 2>&1 || true; }
+remove_containers() { local c; for c in ${cids[@]+"${cids[@]}"}; do docker rm -f "$c" >/dev/null 2>&1 || true; done; docker network rm "$SNET" "$SNET6" >/dev/null 2>&1 || true; }
 trap remove_containers EXIT
 docker network create "$SNET" >/dev/null
 minio="$(docker run -d --network "$SNET" --network-alias minio -e MINIO_ROOT_USER=smokeuser -e MINIO_ROOT_PASSWORD=smokepassword \
@@ -84,10 +85,23 @@ minio="$(docker run -d --network "$SNET" --network-alias minio -e MINIO_ROOT_USE
 cids+=("$minio")
 for _ in $(seq 1 30); do docker exec "$minio" curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live 2>/dev/null && break; sleep 1; done
 docker exec "$minio" sh -c 'mc alias set t http://127.0.0.1:9000 smokeuser smokepassword >/dev/null && mc mb t/smoke >/dev/null' || fail "MinIO: bucket smoke"
-env_args=(--network "$SNET" -e S3_BUCKET_NAME=smoke -e S3_SERVER=minio -e S3_SERVER_PORT=9000 -e S3_SERVER_PROTO=http
+s3_env=(-e S3_BUCKET_NAME=smoke -e S3_SERVER=minio -e S3_SERVER_PORT=9000 -e S3_SERVER_PROTO=http
     -e S3_REGION=us-east-1 -e S3_STYLE=path -e ALLOW_DIRECTORY_LIST=false -e AWS_SIGS_VERSION=4
     -e AWS_ACCESS_KEY_ID=smokeuser -e AWS_SECRET_ACCESS_KEY=smokepassword -e HEALTH_CACHE_VALID=2s)
 # (HEALTH_CACHE_VALID: 2 s here instead of the image's 5m, so S3 stopping shows within seconds)
+env_args=(--network "$SNET" "${s3_env[@]}")
+
+# health_log <container> <extended regex> <seconds>: until a /health line of the access log matches. The line ends
+# with what S3 itself answered (log_format health): s3=<status> cache=<cache status> s3_time=<seconds>.
+health_log() {
+    for _ in $(seq 1 $(($3 * 2))); do
+        docker logs "$1" 2>&1 | grep -F '"GET /health ' | grep -qE -- "$2" && return 0
+        sleep 0.5
+    done
+    echo "no /health log line matches [$2] after $3 s; the last ones:" >&2
+    docker logs "$1" 2>&1 | grep -F '"GET /health ' | tail -3 >&2
+    return 1
+}
 
 # wait_health <container> <status> <seconds>: until Docker reports that health status.
 wait_health() {
@@ -143,6 +157,37 @@ docker exec "$SERVED" rm /tmp/drain
 wait_health "$SERVED" healthy 10 || fail "not healthy again once /tmp/drain is removed"
 pass "/tmp/drain: unhealthy while it exists (gateway still serving), healthy again without it"
 
+# The /health log line says what S3 answered: 404 (no object `health`: the healthy answer) when S3 was asked, and
+# the kept answer in between (cache HIT, S3 not asked).
+health_log "$SERVED" ' 200 [0-9]+ .* s3=404 cache=(MISS|EXPIRED) s3_time=[0-9.]+$' 5 \
+    || fail "no s3= in the /health log line of a healthy gateway (want: 200 ... s3=404 cache=MISS|EXPIRED s3_time=...)"
+health_log "$SERVED" ' 200 [0-9]+ .* s3=- cache=HIT s3_time=-$' 5 \
+    || fail "/health log: no line for the kept answer (want: 200 ... s3=- cache=HIT)"
+pass "/health log: S3's own answer (s3=404 when asked, s3=- cache=HIT for the kept answer)"
+
+# IPv4 only. Production: the container has no IPv6 (net.ipv6.conf.all.disable_ipv6=1 in every stack) and the S3 name
+# has an A and an AAAA record. nginx's own resolver took both, the IPv6 peer could never connect (errno 99), was set
+# aside for 10 s, and one slow IPv4 answer in that window left "no live upstreams" (2026-11-18). Here: MinIO joins a
+# second network that has IPv6, under the name minio6 (A + AAAA in Docker's DNS), and a gateway without IPv6 serves
+# 20 requests that each ask S3 (objects that do not exist: nothing kept). Never skipped: a Docker that cannot create
+# an IPv6 network fails this test.
+docker network create --ipv6 --subnet "fd53:33:$(printf '%x' $(($$ % 65536)))::/64" "$SNET6" >/dev/null \
+    || fail "IPv6: Docker could not create a network with IPv6 (needed to give the S3 name an AAAA record)"
+docker network connect --alias minio6 "$SNET6" "$minio"
+minio_v6="$(docker inspect -f "{{(index .NetworkSettings.Networks \"$SNET6\").GlobalIPv6Address}}" "$minio")"
+[ -n "$minio_v6" ] || fail "IPv6: MinIO got no IPv6 address on ${SNET6}: the test would prove nothing"
+cid="$(docker run -d --platform "$PLATFORM" --network "$SNET6" --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+    "${s3_env[@]}" -e S3_SERVER=minio6 "$TARGET")"
+cids+=("$cid")
+for _ in $(seq 1 30); do c="$(docker exec "$cid" curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health 2>/dev/null || true)"; [ "$c" = 200 ] && break; sleep 1; done
+[ "$c" = 200 ] || { docker logs "$cid" >&2; fail "IPv6: /health answered [$c] on the gateway without IPv6 (want 200)"; }
+codes=""
+for i in $(seq 1 20); do codes="${codes} $(docker exec "$cid" curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/no-such-object-${i}")"; done
+[ "$(tr ' ' '\n' <<<"$codes" | grep -c '^404$')" = 20 ] || fail "IPv6: 20 requests for missing objects answered [${codes} ] (want 20 x 404)"
+v6_lines="$(docker logs "$cid" 2>&1 | grep -E 'connect\(\) to \[|temporarily disabled|no live upstreams' || true)"
+[ -z "$v6_lines" ] || { head -4 <<<"$v6_lines" | cut -c1-220 >&2; fail "IPv6: the gateway tried S3 over IPv6 (${minio_v6}) although its container has none: resolver without ipv6=off"; }
+pass "IPv4 only: S3 name with an IPv6 address (${minio_v6}), container without IPv6: 20 requests, no IPv6 try, no peer set aside"
+
 # DEEP: /health asks S3. Wrong keys: 503 and unhealthy (docker rollout keeps the old copy); S3 gone: 503 once the
 # cached answer expires, unhealthy; S3 back: 200, healthy again
 cid="$(docker run -d --platform "$PLATFORM" "${FAST[@]}" "${env_args[@]}" -e AWS_SECRET_ACCESS_KEY=wrong-secret "$TARGET")"
@@ -150,15 +195,17 @@ cids+=("$cid")
 for _ in $(seq 1 30); do c="$(docker exec "$cid" curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/health 2>/dev/null || true)"; [ "$c" = 503 ] && break; sleep 1; done
 [ "$c" = 503 ] || fail "deep health: /health answered [$c] with a wrong secret key (want 503)"
 wait_health "$cid" unhealthy 15 || fail "deep health: healthy with a wrong secret key"
-pass "deep /health: a wrong secret key -> 503, unhealthy"
+health_log "$cid" ' 503 [0-9]+ .* s3=403 ' 5 || fail "/health log: no s3=403 with a wrong secret key (S3's refusal must show)"
+pass "deep /health: a wrong secret key -> 503, unhealthy, s3=403 in its log line"
 docker stop -t 1 "$minio" >/dev/null
 for _ in $(seq 1 15); do c="$(docker exec "$SERVED" curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/health 2>/dev/null || true)"; [ "$c" = 503 ] && break; sleep 1; done
 [ "$c" = 503 ] || fail "deep health: /health answered [$c] with S3 stopped (want 503)"
 wait_health "$SERVED" unhealthy 15 || fail "deep health: still healthy with S3 stopped"
+health_log "$SERVED" ' 503 [0-9]+ .* s3=(502|504)' 5 || fail "/health log: no s3=502 or s3=504 with S3 stopped"
 docker start "$minio" >/dev/null
 for _ in $(seq 1 30); do docker exec "$minio" curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live 2>/dev/null && break; sleep 1; done
 wait_health "$SERVED" healthy 20 || fail "deep health: not healthy again once S3 is back"
-pass "deep /health: S3 stopped -> 503, unhealthy; S3 back -> healthy"
+pass "deep /health: S3 stopped -> 503, unhealthy, s3=502|504 in its log line; S3 back -> healthy"
 
 cid="$(docker run -d --platform "$PLATFORM" "${FAST[@]}" --entrypoint sleep "$TARGET" infinity)"
 cids+=("$cid")

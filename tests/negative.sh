@@ -63,6 +63,17 @@ refused "broken AWS v4 signature (smoke: the deep /health)" "/health never answe
 refused "broken AWS v4 signature (integration against MinIO)" "test_api.sh failed" \
     env INTEGRATION_QUICK=1 "$ROOT/tests/integration.sh" "$sigv4_broken"
 
+# The resolver looking up IPv6 again (upstream's line): the gateway without IPv6 tries S3's IPv6 address.
+refused "resolver without ipv6=off" "the gateway tried S3 over IPv6" \
+    "$ROOT/tests/smoke.sh" "$(variant resolver-ipv6 'USER root
+RUN sed -i "s/ ipv6=off;/;/" /etc/nginx/templates/upstreams.conf.template
+USER nginx')"
+# /health logged in the main format: the log no longer says what S3 answered.
+refused "/health log without S3's status" "no s3= in the /health log line" \
+    "$ROOT/tests/smoke.sh" "$(variant no-health-log 'USER root
+RUN sed -i "/access_log .* health;/d" /etc/nginx/templates/default.conf.template
+USER nginx')"
+
 # Healthcheck: removed, retimed, or answering without looking at the gateway. The curl wrappers lie
 # only to the healthcheck (the one call with --max-time); smoke.sh's own requests get the real curl.
 curl_wrapper() {   # curl_wrapper <exit code for the healthcheck>: Dockerfile lines

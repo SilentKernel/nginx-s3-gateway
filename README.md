@@ -54,6 +54,21 @@ with a read-only root, `/tmp` must be a tmpfs). `tests/smoke.sh` checks the exac
 healthy in every run, drain, unhealthy without nginx; `tests/negative.sh` refuses an image without
 it, with another one, or with one that does not look at the gateway.
 
+What S3 answered, in the log: `/health` is logged in its own format (`log_format health`, `nginx.conf`), the usual
+line followed by `s3=<S3's status> cache=<cache status> s3_time=<seconds>`. `/health` itself only answers 200 or
+503; the log line tells why: `s3=404` (or 200) S3 answers, `s3=403` the keys or the clock, `s3=503` S3's own error,
+`s3=504` S3 slower than 2 s, `s3=502` S3 unreachable; `s3=- cache=HIT` is the kept answer (S3 not asked); several
+tries are listed in order (`502, 404`). Every other request keeps the `main` format.
+
+S3 over IPv4 only (`resolver ... ipv6=off`, `oss/etc/nginx/templates/upstreams.conf.template`; upstream's line looks
+up both). Our containers run without IPv6 (`net.ipv6.conf.all.disable_ipv6=1` in every stack), and nginx's own
+resolver, unlike the system's, does not care: with an S3 name that has an AAAA record (Hetzner's), the upstream got
+an IPv6 peer that could never connect, the first try of a request failed and the peer was set aside for 10 s, and one
+slow IPv4 answer in that window left `no live upstreams`: an error for the visitor (seen on 2026-11-18). An S3
+reachable over IPv6 only cannot be used with this image. `tests/smoke.sh` proves both (a gateway without IPv6 in
+front of an S3 name with an IPv6 address: no IPv6 try; the `s3=` field healthy, with a wrong key and with S3
+stopped); `tests/negative.sh` refuses an image without either.
+
 CI and runner setup: [`docs/runner.md`](docs/runner.md).
 
 ## Introduction

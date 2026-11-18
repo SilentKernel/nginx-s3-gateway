@@ -2,7 +2,11 @@
 # as they change in DNS.
 
 # Use NGINX's non-blocking DNS resolution
-resolver ${DNS_RESOLVERS};
+# ipv6=off: S3 is reached over IPv4 only. Our containers run without IPv6 (net.ipv6.conf.all.disable_ipv6=1 in every
+# stack), and an S3 name with an AAAA record gave the upstream an IPv6 peer that can never connect (errno 99): the
+# first try of a request failed, the peer was set aside for 10 s (max_fails=1, fail_timeout=10s), and one slow IPv4
+# answer in that window left "no live upstreams": an error for the visitor (seen on 2026-11-18, Hetzner nbg1).
+resolver ${DNS_RESOLVERS} ipv6=off;
 
 upstream storage_urls {
     zone s3_backends 64k;
