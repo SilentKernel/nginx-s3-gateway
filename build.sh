@@ -4,11 +4,14 @@
 #
 #   ./build.sh                      build + every gate, nothing pushed
 #   ./build.sh --push               the same, then push the tags to our registry
-#   NGINX_VERSION=1.30.5 ./build.sh a given version (rollback, reproduction)
+#   NGINX_BASE_TAG=1.30.7 ./build.sh   on a given nginx-docker tag (rollback, reproduction)
+#   NGINX_BASE_LOCAL=1 ./build.sh   on the nginx-docker image of the local engine (a proof before the base
+#                                   is published; never pushed)
 #
-# The version is the latest nginx ${NGINX_SERIES}.x on Docker Hub (scripts/resolve-versions.sh).
-# Dockerfile.oss refuses an nginx below MIN_NGINX_VERSION and pins the njs/xslt modules to that exact
-# nginx; --push refuses to publish a version older than the moving tag serves.
+# The base is our nginx-docker image (${NGINX_BASE_IMAGE}:${NGINX_BASE_TAG}), read fresh and pinned by digest
+# (scripts/resolve-base.sh); the version is the nginx it carries. Dockerfile.oss refuses an nginx below
+# MIN_NGINX_VERSION and pins the njs/xslt modules to that exact nginx; --push refuses to publish a version
+# older than the moving tag serves.
 #
 # Tags: <ver>-unprivileged-YYYYMMDD (never overwritten, for rollbacks),
 # <ver>-unprivileged (latest build of that version), ${NGINX_SERIES}-unprivileged (moving, what
@@ -44,12 +47,17 @@ if [ "$PUSH" = 1 ] && [ -d .git ] && [ -n "$(git status --porcelain)" ]; then
     echo "refusing to push from a dirty working tree: the pushed image would match no commit" >&2
     exit 1
 fi
+if [ "$PUSH" = 1 ] && [ -n "${NGINX_BASE_LOCAL:-}" ]; then
+    echo "refusing to push a build on a local base (NGINX_BASE_LOCAL): the pushed image would match no published base" >&2
+    exit 1
+fi
 SOURCE_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo none)"
 
-echo "==> resolving nginx ${NGINX_SERIES}.x (${DEBIAN})"
-resolved="$("$ROOT/scripts/resolve-versions.sh")"
+echo "==> reading the base ${NGINX_BASE_IMAGE}:${NGINX_BASE_TAG}${NGINX_BASE_LOCAL:+ (local engine)}"
+resolved="$("$ROOT/scripts/resolve-base.sh")"
 eval "$resolved"
-export NGINX_VERSION
+export NGINX_BASE NGINX_VERSION
+echo "    ${NGINX_BASE}: nginx ${NGINX_VERSION}"
 
 TODAY="$(date -u +%Y%m%d)"
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -100,11 +108,11 @@ fi
 TAGS="$CANDIDATE"
 export TAGS SOURCE_COMMIT BUILD_DATE
 
-echo "==> building nginx ${NGINX_VERSION} (floor ${MIN_NGINX_VERSION}), ${PLATFORM}"
-# --pull refreshes nginx:${NGINX_VERSION} (docker-library rebuilds it on Debian updates, but not
-# always soon); Dockerfile.oss's os-updates stage (never cached) applies the Debian updates published
-# since; --load puts the result in the local engine for the tests.
-docker buildx bake --pull --load unprivileged
+echo "==> building on ${NGINX_BASE}: nginx ${NGINX_VERSION} (floor ${MIN_NGINX_VERSION}), ${PLATFORM}"
+# The base is pinned by digest (--pull has nothing to move, it only makes sure the registry is asked);
+# Dockerfile.oss's os-updates stage (never cached) applies the Debian updates published since the base was
+# built; --load puts the result in the local engine for the tests. A local base is not pulled.
+docker buildx bake $([ -n "${NGINX_BASE_LOCAL:-}" ] || echo --pull) --load unprivileged
 
 CANDIDATE_ID="$(docker image inspect -f '{{.Id}}' "$CANDIDATE")"
 echo "==> candidate ${CANDIDATE} (${CANDIDATE_ID})"

@@ -23,7 +23,8 @@ nightlies; the `build` job also takes the `nginx-s3-gateway` resource group.
 
 Outbound HTTPS needed on top of the other projects: `nginx.org` (njs/xslt packages; the image keeps
 its repository, so `tests/os-updates.sh`'s `apt-get update` needs it every night too),
-`hub.docker.com` (tag lookup), Docker Hub registry (pulls only: `nginx`, `pgsty/minio`,
+our registry (the `nginx-docker` base, pulled with the job token: this project is on its allowlist),
+Docker Hub registry (pulls only: `nginx` for `tests/guard.sh`'s old base, `pgsty/minio`,
 `aquasec/trivy`).
 
 ## 3. CI/CD variables (Settings > CI/CD > Variables)

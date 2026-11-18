@@ -10,10 +10,21 @@ FAILED=0
 pass() { echo "ok   $*"; }
 bad() { echo "FAIL $*" >&2; FAILED=1; }
 
-# Runs the resolver offline on the fixture, with extra VAR=value assignments.
+# Runs the base reader offline on a captured registry answer, with extra VAR=value assignments.
 resolve() {
-    env -i PATH="$PATH" NGINX_SERIES=1.30 DEBIAN=trixie NGINX_TAGS_JSON_FILE="$FIX/nginx-tags.json" \
-        "$@" "$ROOT/scripts/resolve-versions.sh" 2>&1
+    env -i PATH="$PATH" NGINX_SERIES=1.30 PLATFORM=linux/amd64 NGINX_BASE_IMAGE=registry.example/silent/nginx-docker \
+        NGINX_BASE_TAG=1.30 NGINX_BASE_JSON_FILE="$tmp/base.json" "$@" "$ROOT/scripts/resolve-base.sh" 2>&1
+}
+# base_json <file> <version label> [<digest>] [index]: what `imagetools inspect --format '{{json .}}'` prints
+base_json() {
+    python3 -I -c '
+import json, sys
+path, version, digest, shape = sys.argv[1:5]
+image = {"config": {"Labels": {"io.silent.version": version} if version else {}}}
+if shape == "index":
+    image = {"linux/amd64": image, "linux/arm64": {"config": {"Labels": {"io.silent.version": "9.9.9"}}}}
+d = {"image": image, "manifest": {"digest": digest} if digest else {}}
+json.dump(d, open(path, "w"))' "$1" "$2" "${3-sha256:$(printf 'a%.0s' $(seq 1 64))}" "${4:-single}"
 }
 
 expect_ok() {   # <name> <expected output> <command...>
@@ -33,23 +44,33 @@ expect_fail() {   # <name> <expected message part> <command...>
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"; [ -z "${server_pid:-}" ] || kill "$server_pid" 2>/dev/null || true' EXIT
 
-echo "--- resolve-versions.sh"
-expect_ok "latest 1.30.x with a same-digest -trixie tag (1.30.10 > 1.30.9; not 1.30.11 without trixie, not 1.30.12 with another trixie digest, not 1.300.1, not -alpine)" \
-    "NGINX_VERSION=1.30.10" resolve
-expect_ok "NGINX_VERSION override: a published version is accepted" "NGINX_VERSION=1.30.9" resolve NGINX_VERSION=1.30.9
-expect_fail "NGINX_VERSION override: unpublished version" "(asked: 1.30.99)" resolve NGINX_VERSION=1.30.99
-expect_fail "NGINX_VERSION override: no trixie variant" "(asked: 1.30.11)" resolve NGINX_VERSION=1.30.11
-expect_fail "NGINX_VERSION override: outside the series" "(asked: 1.300.1)" resolve NGINX_VERSION=1.300.1
-expect_fail "another Debian: nothing matches" "not a published 1.30.x release on bullseye" resolve DEBIAN=bullseye
-expect_ok "another Debian with a match" "NGINX_VERSION=1.30.11" resolve DEBIAN=bookworm NGINX_SERIES=1.30 \
-    NGINX_TAGS_JSON_FILE="$FIX/nginx-tags.json" NGINX_VERSION=1.30.11
-expect_fail "series without any release" "not a published 1.31.x release" resolve NGINX_SERIES=1.31
-echo '{"count": 0, "next": null, "results": []}' > "$tmp/none.json"
-expect_fail "empty tag list" "is not a published 1.30.x" resolve NGINX_TAGS_JSON_FILE="$tmp/none.json"
-echo '<html>maintenance</html>' > "$tmp/html.json"
-expect_fail "answer is not JSON" "Docker Hub did not return JSON" resolve NGINX_TAGS_JSON_FILE="$tmp/html.json"
-echo '{"message": "too many requests"}' > "$tmp/limit.json"
-expect_fail "Docker Hub error object (rate limit)" "Docker Hub: too many requests" resolve NGINX_TAGS_JSON_FILE="$tmp/limit.json"
+DIG="sha256:$(printf 'a%.0s' $(seq 1 64))"
+echo "--- resolve-base.sh"
+base_json "$tmp/base.json" 1.30.7
+expect_ok "the base pinned by digest, the nginx it carries (label io.silent.version)" \
+    "NGINX_BASE=registry.example/silent/nginx-docker@${DIG}
+NGINX_VERSION=1.30.7" resolve
+base_json "$tmp/base.json" 1.30.10 "$DIG" index
+expect_ok "a multi-platform index: the label of our platform, not another one's" \
+    "NGINX_BASE=registry.example/silent/nginx-docker@${DIG}
+NGINX_VERSION=1.30.10" resolve
+base_json "$tmp/base.json" ""
+expect_fail "an image without the label (not our nginx-docker) is refused" "announces nginx '-'" resolve
+base_json "$tmp/base.json" 1.31.2
+expect_fail "another series is refused" "not a 1.30.x" resolve
+base_json "$tmp/base.json" 1.300.1
+expect_fail "1.300.1 is not a 1.30.x" "not a 1.30.x" resolve
+base_json "$tmp/base.json" 1.30.7 ""
+expect_fail "no manifest digest: nothing to pin, refused" "has no manifest digest" resolve
+echo '<html>maintenance</html>' > "$tmp/base.json"
+expect_fail "answer is not JSON" "the registry did not return JSON" resolve
+expect_fail "NGINX_BASE_IMAGE is required" "NGINX_BASE_IMAGE is not set" \
+    sh -c 'env -i PATH="$PATH" NGINX_SERIES=1.30 NGINX_BASE_TAG=1.30 "$0" 2>&1' "$ROOT/scripts/resolve-base.sh"
+if grep -q 'FROM ${NGINX_BASE} AS gateway' "$ROOT/Dockerfile.oss" && grep -q 'NGINX_BASE        = NGINX_BASE' "$ROOT/docker-bake.hcl" \
+    && grep -q 'export NGINX_BASE NGINX_VERSION' "$ROOT/build.sh" && ! grep -rq 'hub.docker.com' "$ROOT/build.sh" "$ROOT/scripts"
+then pass "build.sh hands the pinned base to Dockerfile.oss through docker-bake.hcl; nothing asks Docker Hub for a version"
+else bad "the pinned base does not reach Dockerfile.oss"; fi
+if grep -q 'refusing to push a build on a local base' "$ROOT/build.sh"; then pass "build.sh refuses to push a build on a local base"; else bad "a local base could be pushed"; fi
 
 echo "--- version-compare.sh (no-downgrade)"
 cmp() { "$ROOT/scripts/version-compare.sh" "$@" && echo allowed || echo refused; }
@@ -97,12 +118,11 @@ echo "--- notify.sh"
 expect_ok "no NTFY_TOPIC: skipped, exit 0" "notify: NTFY_TOPIC not set, skipped: t" \
     env -u NTFY_TOPIC "$ROOT/scripts/notify.sh" high warning t m
 
-# A local stand-in for ntfy (POST) and Docker Hub (GET, two pages), recording each request.
+# A local stand-in for ntfy (POST), recording each request.
 port="$(python3 -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 python3 -I - "$port" "$tmp/requests.jsonl" <<'PY' &
 import http.server, json, sys
 port, log = int(sys.argv[1]), sys.argv[2]
-def tag(n, d): return {"name": n, "digest": "sha256:" + d * 64}
 class H(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
@@ -110,18 +130,7 @@ class H(http.server.BaseHTTPRequestHandler):
             f.write(json.dumps({"path": self.path, "headers": dict(self.headers), "body": body}) + "\n")
         self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
     def do_GET(self):
-        with open(log + ".get", "a") as f:
-            f.write(self.path + "\n")
-        if self.path.startswith("/v2/repositories/library/nginx/tags"):
-            if "page=2" in self.path:
-                d = {"next": None, "results": [tag("1.30.8", "c"), tag("1.30.8-trixie", "c")]}
-            else:
-                d = {"next": "http://127.0.0.1:%d/v2/repositories/library/nginx/tags?name=1.30.&page_size=100&page=2" % port,
-                     "results": [tag("1.30.7", "a"), tag("1.30.7-trixie", "a")]}
-            body = json.dumps(d).encode()
-        else:
-            body = b"{}"
-        self.send_response(200); self.end_headers(); self.wfile.write(body)
+        self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 PY
@@ -145,13 +154,6 @@ assert "Authorization" not in b["headers"] and "Click" not in b["headers"] and b
 PY
 then pass "topic, title, priority, tags, click URL, bearer token and body sent; no token header without NTFY_TOKEN"
 else bad "notify request content"; fi
-
-echo "--- resolve-versions.sh over HTTP (local Docker Hub stand-in, two pages)"
-expect_ok "follows next: the newest is on page 2" "NGINX_VERSION=1.30.8" \
-    env -i PATH="$PATH" NGINX_SERIES=1.30 DEBIAN=trixie DOCKERHUB_API_URL="http://127.0.0.1:$port" "$ROOT/scripts/resolve-versions.sh"
-if [ "$(cat "$tmp/requests.jsonl.get" | grep -c '^/v2/repositories/library/nginx/tags?name=1.30.&page_size=100')" = 2 ]; then
-    pass "Docker Hub requests: name=1.30. filter, pages of 100, both pages fetched"
-else bad "Docker Hub requests: $(tr '\n' ' ' < "$tmp/requests.jsonl.get")"; fi
 
 echo "--- build.sh: the new-base message goes to NTFY_TOPIC_NEWBASE, never to NTFY_TOPIC"
 # The exact call of build.sh (from its package,arrow_up line to the end of the command), run against
@@ -179,8 +181,6 @@ then pass "NTFY_TOPIC_NEWBASE unset: new-base message skipped, not sent to NTFY_
 else bad "NTFY_TOPIC_NEWBASE unset: got [$out]"; fi
 
 kill "$server_pid"; wait "$server_pid" 2>/dev/null || true; server_pid=""
-expect_fail "Docker Hub unreachable" "cannot reach Docker Hub" \
-    resolve NGINX_TAGS_JSON_FILE= DOCKERHUB_API_URL="http://127.0.0.1:$port"
 expect_ok "ntfy unreachable: exit 0, error only logged" "" \
     env NTFY_URL="http://127.0.0.1:$port" NTFY_TOPIC=t "$ROOT/scripts/notify.sh" high x t m
 

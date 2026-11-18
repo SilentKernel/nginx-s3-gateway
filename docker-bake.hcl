@@ -1,10 +1,12 @@
 # Driven by build.sh, which exports versions.env and the resolved version. Two stages:
-#   oss           Dockerfile.oss on nginx:${NGINX_VERSION} (njs, S3 gateway config, then the day's
-#                 Debian updates)
+#   oss           Dockerfile.oss on ${NGINX_BASE}, our nginx-docker image pinned by digest (njs, S3
+#                 gateway config, then the day's Debian updates)
 #   unprivileged  Dockerfile.unprivileged on top of it (port 8080, user nginx): what we publish
 # The "nginx-s3-gateway" image Dockerfile.unprivileged starts FROM is the oss target itself, never a
 # local tag: another build on the same Docker engine cannot swap it.
 
+# The nginx image to build on (scripts/resolve-base.sh) and the nginx it carries (labels, tags).
+variable "NGINX_BASE" {}
 variable "NGINX_VERSION" {}
 variable "MIN_NGINX_VERSION" {}
 variable "DEBIAN" {}
@@ -27,7 +29,7 @@ target "oss" {
   # unprivileged only reuses this target's result.
   no-cache-filter = ["os-updates"]
   args = {
-    NGINX_VERSION     = NGINX_VERSION
+    NGINX_BASE        = NGINX_BASE
     MIN_NGINX_VERSION = MIN_NGINX_VERSION
   }
 }
@@ -46,6 +48,7 @@ target "unprivileged" {
     "org.opencontainers.image.created"        = BUILD_DATE
     "org.opencontainers.image.licenses"       = "Apache-2.0"
     "dev.nginx-s3-gateway.nginx-version"      = NGINX_VERSION
+    "dev.nginx-s3-gateway.nginx-base"         = NGINX_BASE
   }
   tags = split(",", TAGS)
 }

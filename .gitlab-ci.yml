@@ -1,6 +1,6 @@
 # Nightly build of the unprivileged nginx-s3-gateway image. Runs on the amd64 VM runner shared with
 # frankenphp-docker & co (shell executor, see docs/runner.md). On the default branch (push, nightly
-# schedule, manual "Run pipeline") the image is built on the latest nginx 1.30.x with Debian's
+# schedule, manual "Run pipeline") the image is built on our nginx-docker image (the latest nginx 1.30.x) with Debian's
 # updates, tested and pushed to our registry (only: no Docker Hub copy); elsewhere (merge requests,
 # other branches) it is built and tested only. Every gate (smoke, upstream's API suite against MinIO,
 # negative tests, CVE report) runs inside build.sh before anything is pushed.

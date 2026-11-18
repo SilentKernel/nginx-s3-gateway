@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Negative test of the build guard in Dockerfile.oss: building on an nginx below the floor must FAIL.
-# Cheap: an older 1.30.x base, the build stops at the guard (nothing pushed, nothing tagged).
+# Cheap: an older 1.30.x base, the build stops at the guard (nothing pushed, nothing tagged). The old base is
+# Docker Hub's official nginx:<old> (our nginx-docker is a drop-in for it and never publishes below its own
+# floor, so the registry has no old one to build on).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,7 +13,7 @@ set +a
 
 # 1.30.1 is a published 1.30.x, below any floor this series will have.
 OLD=1.30.1
-export NGINX_VERSION="$OLD" TAGS="nginx-s3-guard-test:must-not-exist"
+export NGINX_BASE="nginx:${OLD}" NGINX_VERSION="$OLD" TAGS="nginx-s3-guard-test:must-not-exist"
 
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT

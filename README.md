@@ -11,24 +11,27 @@
 ## Our nightly build (fork)
 
 This fork publishes the **unprivileged** image (port 8080, user `nginx`), rebuilt every night by
-GitLab CI on the latest **nginx 1.30.x** with **Debian's updates of the day**, after every gate passed:
+GitLab CI on our own nginx image (`../nginx-docker`: the latest **nginx 1.30.x** of nginx.org's packages, a drop-in for
+the official image, not Docker Hub's since 2026-11-18) with **Debian's updates of the day**, after every gate passed:
 
 | Tag (in `registry.developpeur-freelance.io/silent/nginx-s3-gateway-docker`; no longer on Docker Hub) | Use |
 |---|---|
 | `1.30-unprivileged` | moving: what production uses |
 | `latest` | same image as `1.30-unprivileged` |
-| `1.30.6-unprivileged` | latest build of that nginx version |
-| `1.30.6-unprivileged-YYYYMMDD` | never overwritten, for rollbacks |
+| `1.30.7-unprivileged` | latest build of that nginx version |
+| `1.30.7-unprivileged-YYYYMMDD` | never overwritten, for rollbacks |
 
 ```bash
-./build.sh                       # resolve the latest 1.30.x, build, every test gate; nothing pushed
+./build.sh                       # read the nginx-docker base, build, every test gate; nothing pushed
 ./build.sh --push                # the same, then push to our registry (clean tree; refuses to downgrade)
-NGINX_VERSION=1.30.5 ./build.sh  # a given version (rollback, reproduction)
+NGINX_BASE_TAG=1.30.7 ./build.sh # on a given nginx-docker tag (rollback, reproduction)
+NGINX_BASE_LOCAL=1 ./build.sh    # on the local engine's nginx-docker image (never pushed)
 tests/unit.sh                    # offline tests of scripts/
 ```
 
 Settings live in `versions.env` (series `NGINX_SERIES=1.30`, security floor `MIN_NGINX_VERSION`,
-registry). Gates, in order: version lookup (`scripts/resolve-versions.sh`), floor guard and module
+registry). Gates, in order: the base read and pinned by digest (`scripts/resolve-base.sh`: `NGINX_BASE_IMAGE`,
+`NGINX_BASE_TAG`), floor guard and module
 pinning (`Dockerfile.oss`), no downgrade of the moving tag, `tests/smoke.sh`, `tests/os-updates.sh`
 (online: no update from Debian's archive may be pending; what only `dist-upgrade` would apply is a
 WARNING; nginx.org's packages are not counted), `tests/integration.sh` (upstream's API suite against

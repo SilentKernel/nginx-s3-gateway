@@ -1,9 +1,10 @@
-# Base version: build.sh passes the latest 1.30.x (scripts/resolve-versions.sh); the default is for
-# a plain `docker build` (upstream GitHub workflow, test.sh).
-ARG NGINX_VERSION=1.30.6
+# The base: our own nginx image (../nginx-docker, a drop-in for the official one: same packages, variables
+# and entrypoint). build.sh passes it pinned by digest (scripts/resolve-base.sh); the default is for a plain
+# `docker build` (test.sh).
+ARG NGINX_BASE=registry.developpeur-freelance.io/silent/nginx-docker:1.30
 # Two stages: "gateway" (modules, guard, config; cached, it only changes with the nginx base) and
 # "os-updates" (the day's Debian updates; never cached by build.sh, see docker-bake.hcl).
-FROM nginx:${NGINX_VERSION} AS gateway
+FROM ${NGINX_BASE} AS gateway
 
 # Security floor (versions.env, passed by build.sh). Empty: no check.
 ARG MIN_NGINX_VERSION=""
@@ -67,8 +68,8 @@ RUN set -x \
     && chown nginx:nginx /var/cache/nginx/s3_proxy \
     && find /docker-entrypoint.d -type f \( -name '*.sh' -or -name '*.envsh' \) -exec chmod -v +x {} \;
 
-# Debian's updates of the day (security fixes first), without waiting for Docker Hub to rebuild
-# nginx:${NGINX_VERSION}. Never taken from the build cache by build.sh (no-cache-filter in
+# Debian's updates of the day (security fixes first), without waiting for the base's next rebuild.
+# Never taken from the build cache by build.sh (no-cache-filter in
 # docker-bake.hcl), so only this stage (and Dockerfile.unprivileged's) runs again each night.
 # Debian's archive only (debian.sources; nginx.org's nginx.list, added above, is left out): the
 # upgrade never touches nginx or its modules, which stay pinned to the base image's nginx. `upgrade`,
